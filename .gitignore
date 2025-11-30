@@ -1,0 +1,17 @@
+*.tflite
+*.bin
+*.so
+*.h
+*.wav
+*.pcm
+*.gif
+build/
+.gradle/
+caches/
+daemon/
+*.aar
+*/build/
+**/intermediates/
+**/tf-lite-api/
+**/samples/
+**/D/
