@@ -1,5 +1,6 @@
 package com.example.greekvoiceassistant
 
+import android.content.Intent
 import android.os.Bundle
 import com.google.android.material.snackbar.Snackbar
 import androidx.appcompat.app.AppCompatActivity
@@ -33,6 +34,13 @@ class MainActivity : AppCompatActivity() {
                 .setAction("Action", null)
                 .setAnchorView(R.id.fab).show()
         }
+
+        // Preload Whisper in background
+        Thread {
+            val intent = Intent(this, RecordingService::class.java)
+            intent.action = "PRELOAD_WHISPER"
+            startService(intent)
+        }.start()
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
