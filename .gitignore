@@ -15,3 +15,5 @@ daemon/
 **/tf-lite-api/
 **/samples/
 **/D/
+wrapper/dists/
+gradle/wrapper/gradle-wrapper.jar
