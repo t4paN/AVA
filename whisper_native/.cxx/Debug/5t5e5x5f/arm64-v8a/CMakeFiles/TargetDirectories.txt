@@ -1,0 +1,3 @@
+/home/roci/aggelosvoiceassistant/whisper_native/.cxx/Debug/5t5e5x5f/arm64-v8a/CMakeFiles/audioEngine.dir
+/home/roci/aggelosvoiceassistant/whisper_native/.cxx/Debug/5t5e5x5f/arm64-v8a/CMakeFiles/edit_cache.dir
+/home/roci/aggelosvoiceassistant/whisper_native/.cxx/Debug/5t5e5x5f/arm64-v8a/CMakeFiles/rebuild_cache.dir

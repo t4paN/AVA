@@ -31,13 +31,14 @@ class RecordingService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var whisperEngine: WhisperEngine? = null
     private var isRecording = false
+    private var isProcessing = false
     private var mediaPlayer: MediaPlayer? = null
     private var recordingThread: Thread? = null
 
     companion object {
         private const val TAG = "RecordingService"
-        private const val RECORDING_DURATION_MS = 2000L
-        private const val SAMPLE_RATE = 16000 // Whisper expects 16kHz
+        private const val RECORDING_DURATION_MS = 4000L
+        private const val SAMPLE_RATE = 16000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
     }
@@ -87,16 +88,21 @@ class RecordingService : Service() {
                 mediaPlayer = null
 
                 handler.postDelayed({
-                    initializeWhisper()
+                    if (whisperEngine == null) {
+                        Log.d(TAG, "First run - initializing Whisper...")
+                        initializeWhisper()
+                    }
                     prepareRecorder()
-                }, 1000)
+                }, 100)
             }
 
             mediaPlayer?.setOnErrorListener { mp, what, extra ->
                 Log.e(TAG, "MediaPlayer error: what=$what, extra=$extra")
                 mp.release()
                 mediaPlayer = null
-                initializeWhisper()
+                if (whisperEngine == null) {
+                    initializeWhisper()
+                }
                 prepareRecorder()
                 true
             }
@@ -105,7 +111,9 @@ class RecordingService : Service() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Error playing prompt", e)
-            initializeWhisper()
+            if (whisperEngine == null) {
+                initializeWhisper()
+            }
             prepareRecorder()
         }
     }
@@ -115,7 +123,6 @@ class RecordingService : Service() {
         try {
             Log.d(TAG, "Copying model from assets...")
 
-            // Copy model file
             val modelPath = File(filesDir, "whisper-base.TOP_WORLD.tflite").absolutePath
             assets.open("whisper-base.TOP_WORLD.tflite").use { input ->
                 FileOutputStream(modelPath).use { output ->
@@ -123,7 +130,6 @@ class RecordingService : Service() {
                 }
             }
 
-            // Copy filters_vocab file
             Log.d(TAG, "Copying filters_vocab from assets...")
             val filtersVocabPath = File(filesDir, "filters_vocab_multilingual.bin").absolutePath
             assets.open("filters_vocab_multilingual.bin").use { input ->
@@ -171,15 +177,16 @@ class RecordingService : Service() {
 
             audioRecord?.startRecording()
             Log.d(TAG, "Recording started!")
+
+            playStartBeep()
+
             showToast("Recording...")
 
-            // Record in background thread
             recordingThread = Thread {
                 recordAudio(bufferSize)
             }
             recordingThread?.start()
 
-            // Auto-stop after 2 seconds
             handler.postDelayed({
                 stopRecordingAndPlayBeep()
             }, RECORDING_DURATION_MS)
@@ -206,17 +213,15 @@ class RecordingService : Service() {
                 }
             }
 
-            // Convert to byte array
             val audioData = allData.toByteArray()
             Log.d(TAG, "Recorded ${audioData.size} bytes")
 
-            // Write to WAV file using WaveUtil
             WaveUtil.createWaveFile(
                 outputFile.absolutePath,
                 audioData,
                 SAMPLE_RATE,
-                1, // mono
-                2  // 16-bit = 2 bytes per sample
+                1,
+                2
             )
             Log.d(TAG, "WAV file created: ${outputFile.absolutePath}")
 
@@ -236,11 +241,9 @@ class RecordingService : Service() {
             audioRecord?.release()
             audioRecord = null
 
-            // Wait for recording thread to finish
             recordingThread?.join(500)
 
-            // Play beep, then transcribe
-            playBeep()
+            playStopBeep()
 
         } catch (e: Exception) {
             Log.e(TAG, "Stop recording error", e)
@@ -248,37 +251,76 @@ class RecordingService : Service() {
         }
     }
 
-    private fun playBeep() {
+    private fun playStartBeep() {
         try {
-            Log.d(TAG, "Playing beep...")
+            Log.d(TAG, "Playing start beep...")
             mediaPlayer = MediaPlayer.create(this, R.raw.beep)
 
             mediaPlayer?.setOnCompletionListener {
-                Log.d(TAG, "Beep finished")
+                Log.d(TAG, "Start beep finished")
                 it.release()
                 mediaPlayer = null
-                transcribeAudio()
             }
 
             mediaPlayer?.setOnErrorListener { mp, what, extra ->
-                Log.e(TAG, "MediaPlayer beep error: what=$what, extra=$extra")
+                Log.e(TAG, "MediaPlayer start beep error: what=$what, extra=$extra")
                 mp.release()
                 mediaPlayer = null
-                transcribeAudio()
                 true
             }
 
             mediaPlayer?.start()
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error playing beep", e)
-            transcribeAudio()
+            Log.e(TAG, "Error playing start beep", e)
+        }
+    }
+
+    private fun playStopBeep() {
+        try {
+            Log.d(TAG, "Playing stop beep...")
+            mediaPlayer = MediaPlayer.create(this, R.raw.beep)
+
+            mediaPlayer?.setOnCompletionListener {
+                Log.d(TAG, "Stop beep finished")
+                it.release()
+                mediaPlayer = null
+
+                if (isProcessing) {
+                    Log.d(TAG, "Already processing - skipping this transcription")
+                    stopSelf()
+                    return@setOnCompletionListener
+                }
+
+                transcribeAudio()
+            }
+
+            mediaPlayer?.setOnErrorListener { mp, what, extra ->
+                Log.e(TAG, "MediaPlayer stop beep error: what=$what, extra=$extra")
+                mp.release()
+                mediaPlayer = null
+
+                if (!isProcessing) {
+                    transcribeAudio()
+                }
+                true
+            }
+
+            mediaPlayer?.start()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error playing stop beep", e)
+            if (!isProcessing) {
+                transcribeAudio()
+            }
         }
     }
 
     private fun transcribeAudio() {
         Thread {
             try {
+                isProcessing = true
+
                 Log.d(TAG, "=== Starting transcription ===")
                 Log.d(TAG, "Audio file: ${outputFile.absolutePath}")
                 Log.d(TAG, "File exists: ${outputFile.exists()}")
@@ -305,7 +347,7 @@ class RecordingService : Service() {
                     showToast("Error: ${e.message}")
                 }
             } finally {
-                whisperEngine?.deinitialize()
+                isProcessing = false
                 handler.post {
                     stopSelf()
                 }
@@ -320,6 +362,15 @@ class RecordingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == "PRELOAD_WHISPER") {
+            Log.d(TAG, "Preloading Whisper...")
+            if (whisperEngine == null) {
+                initializeWhisper()
+            }
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         return START_NOT_STICKY
     }
 

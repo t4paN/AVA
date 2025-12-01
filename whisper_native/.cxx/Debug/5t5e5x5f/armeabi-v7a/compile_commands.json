@@ -1,0 +1,12 @@
+[
+{
+  "directory": "/home/roci/aggelosvoiceassistant/whisper_native/.cxx/Debug/5t5e5x5f/armeabi-v7a",
+  "command": "/home/roci/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ --target=armv7-none-linux-androideabi26 --sysroot=/home/roci/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/sysroot -DaudioEngine_EXPORTS -I/home/roci/aggelosvoiceassistant/whisper_native/src/main/cpp/tf-lite-api/tensorflow_src -I/home/roci/aggelosvoiceassistant/whisper_native/src/main/cpp/tf-lite-api/include/flatbuffers/include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security   -fno-limit-debug-info  -fPIC -o CMakeFiles/audioEngine.dir/TFLiteEngine.cpp.o -c /home/roci/aggelosvoiceassistant/whisper_native/src/main/cpp/TFLiteEngine.cpp",
+  "file": "/home/roci/aggelosvoiceassistant/whisper_native/src/main/cpp/TFLiteEngine.cpp"
+},
+{
+  "directory": "/home/roci/aggelosvoiceassistant/whisper_native/.cxx/Debug/5t5e5x5f/armeabi-v7a",
+  "command": "/home/roci/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ --target=armv7-none-linux-androideabi26 --sysroot=/home/roci/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/sysroot -DaudioEngine_EXPORTS -I/home/roci/aggelosvoiceassistant/whisper_native/src/main/cpp/tf-lite-api/tensorflow_src -I/home/roci/aggelosvoiceassistant/whisper_native/src/main/cpp/tf-lite-api/include/flatbuffers/include -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security   -fno-limit-debug-info  -fPIC -o CMakeFiles/audioEngine.dir/TFLiteEngineJNI.cpp.o -c /home/roci/aggelosvoiceassistant/whisper_native/src/main/cpp/TFLiteEngineJNI.cpp",
+  "file": "/home/roci/aggelosvoiceassistant/whisper_native/src/main/cpp/TFLiteEngineJNI.cpp"
+}
+]

@@ -1,0 +1,6 @@
+# ninja log v5
+0	361	1764504932109920684	CMakeFiles/audioEngine.dir/TFLiteEngineJNI.cpp.o	28b286c9234912a3
+1	3214	1764504934933857534	CMakeFiles/audioEngine.dir/TFLiteEngine.cpp.o	7af27e79003560cb
+3215	3263	1764504935005855926	/home/roci/aggelosvoiceassistant/whisper_native/build/intermediates/cxx/Debug/5t5e5x5f/obj/armeabi-v7a/libaudioEngine.so	beb34c9709887df4
+5	3266	1764512200635643403	CMakeFiles/audioEngine.dir/TFLiteEngine.cpp.o	7af27e79003560cb
+3266	3314	1764512200723643483	/home/roci/aggelosvoiceassistant/whisper_native/build/intermediates/cxx/Debug/5t5e5x5f/obj/armeabi-v7a/libaudioEngine.so	beb34c9709887df4
