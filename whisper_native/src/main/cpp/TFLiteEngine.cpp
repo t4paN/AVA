@@ -3,16 +3,11 @@
 #include <cstring>
 #include <vector>
 #include <sys/time.h>
-#include <android/log.h>
 #include "tensorflow/lite/core/interpreter.h"
 #include "tensorflow/lite/kernels/register.h"
 #include "tensorflow/lite/model.h"
 #include "tensorflow/lite/optional_debug_tools.h"
 #include "tensorflow/lite/delegates/gpu/delegate.h"
-
-#define LOG_TAG "TFLiteEngine"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 #include "TFLiteEngine.h"
 #include "input_features.h"
@@ -40,7 +35,7 @@ int TFLiteEngine:: loadModel(const char *modelPath, const bool isMultilingual) {
 
         /////////////// Load filters and vocab data ///////////////
 
-        const char* vocabData = nullptr;
+       const char* vocabData = nullptr;
         if (isMultilingual)
             vocabData = reinterpret_cast<const char*>(filters_vocab_multilingual);
         else
@@ -196,34 +191,14 @@ std::string TFLiteEngine::transcribeBuffer(std::vector<float> samples) {
 
     gettimeofday(&start_time, NULL);
 
-    // Check if model has a second input for language token
-    int num_inputs = g_whisper_tflite.interpreter->inputs().size();
-    LOGI("Model has %d inputs", num_inputs);
-
-    if (num_inputs > 1) {
-        // Model supports language forcing - set Greek language token
-        LOGI("Setting Greek language token (50281)");
-        TfLiteTensor* lang_tensor = g_whisper_tflite.interpreter->tensor(g_whisper_tflite.interpreter->inputs()[1]);
-
-        if (lang_tensor != nullptr && lang_tensor->type == kTfLiteInt32) {
-            lang_tensor->data.i32[0] = 50281;  // Greek language token
-            LOGI("Greek language token set successfully");
-        } else {
-            LOGE("Warning: Language tensor format unexpected");
-        }
-    } else {
-        LOGI("Model does not support language forcing (single input)");
-    }
-
     // Run inference
     g_whisper_tflite.interpreter->SetNumThreads(processor_count);
     if (g_whisper_tflite.interpreter->Invoke() != kTfLiteOk) {
-        LOGE("Inference failed!");
         return "";
     }
 
     gettimeofday(&end_time, NULL);
-    LOGI("Time taken for Interpreter: %d ms", TIME_DIFF_MS(start_time, end_time));
+    std::cout << "Time taken for Interpreter: " << TIME_DIFF_MS(start_time, end_time) << " ms" << std::endl;
 
     int output = g_whisper_tflite.interpreter->outputs()[0];
     TfLiteTensor *output_tensor = g_whisper_tflite.interpreter->tensor(output);
