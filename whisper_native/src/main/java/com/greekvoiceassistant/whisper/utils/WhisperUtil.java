@@ -6,6 +6,8 @@ import static java.lang.Math.sin;
 
 import android.util.Log;
 
+import org.jtransforms.fft.FloatFFT_1D;
+
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -30,6 +32,9 @@ public class WhisperUtil {
     private final WhisperVocab vocab = new WhisperVocab();
     private final WhisperFilter filters = new WhisperFilter();
     private final WhisperMel mel = new WhisperMel();
+
+    // JTransforms FFT computer - initialized once for performance
+    private FloatFFT_1D fftComputer;
 
     // Helper functions definitions
     public int getTokenTranslate() {
@@ -157,6 +162,12 @@ public class WhisperUtil {
         int fftSize = WHISPER_N_FFT;
         int fftStep = WHISPER_HOP_LENGTH;
 
+        // Initialize FFT computer once for reuse
+        if (fftComputer == null) {
+            fftComputer = new FloatFFT_1D(fftSize);
+            Log.d(TAG, "FFT computer initialized for size: " + fftSize);
+        }
+
         mel.nMel = WHISPER_N_MEL;
         mel.nLen = nSamples / fftStep;
         mel.data = new float[mel.nMel * mel.nLen];
@@ -192,42 +203,42 @@ public class WhisperUtil {
 //        for (int i = 0; i < mel.nLen; i++) {
 /////////////// END of Block ///////////////////////////////////////////////////////////////////////
 
-            int offset = i * fftStep;
+                    int offset = i * fftStep;
 
-            // apply Hanning window
-            for (int j = 0; j < fftSize; j++) {
-                if (offset + j < nSamples) {
-                    fftIn[j] = hann[j] * samples[offset + j];
-                } else {
-                    fftIn[j] = 0.0f;
+                    // apply Hanning window
+                    for (int j = 0; j < fftSize; j++) {
+                        if (offset + j < nSamples) {
+                            fftIn[j] = hann[j] * samples[offset + j];
+                        } else {
+                            fftIn[j] = 0.0f;
+                        }
+                    }
+
+                    // FFT -> mag^2
+                    fft(fftIn, fftOut);
+                    for (int j = 0; j < fftSize; j++) {
+                        fftOut[j] = fftOut[2 * j] * fftOut[2 * j] + fftOut[2 * j + 1] * fftOut[2 * j + 1];
+                    }
+
+                    for (int j = 1; j < fftSize / 2; j++) {
+                        fftOut[j] += fftOut[fftSize - j];
+                    }
+
+                    // mel spectrogram
+                    for (int j = 0; j < mel.nMel; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < nFft; k++) {
+                            sum += (fftOut[k] * filters.data[j * nFft + k]);
+                        }
+
+                        if (sum < 1e-10) {
+                            sum = 1e-10;
+                        }
+
+                        sum = log10(sum);
+                        mel.data[j * mel.nLen + i] = (float) sum;
+                    }
                 }
-            }
-
-            // FFT -> mag^2
-            fft(fftIn, fftOut);
-            for (int j = 0; j < fftSize; j++) {
-                fftOut[j] = fftOut[2 * j] * fftOut[2 * j] + fftOut[2 * j + 1] * fftOut[2 * j + 1];
-            }
-
-            for (int j = 1; j < fftSize / 2; j++) {
-                fftOut[j] += fftOut[fftSize - j];
-            }
-
-            // mel spectrogram
-            for (int j = 0; j < mel.nMel; j++) {
-                double sum = 0.0;
-                for (int k = 0; k < nFft; k++) {
-                    sum += (fftOut[k] * filters.data[j * nFft + k]);
-                }
-
-                if (sum < 1e-10) {
-                    sum = 1e-10;
-                }
-
-                sum = log10(sum);
-                mel.data[j * mel.nLen + i] = (float) sum;
-            }
-        }
 
 /////////////// UNCOMMENT below block to use multithreaded mel calculation /////////////////////////
             });
@@ -264,6 +275,17 @@ public class WhisperUtil {
         return mel.data;
     }
 
+    // Optimized FFT using JTransforms
+    private void fft(float[] input, float[] output) {
+        // Copy input to output array
+        System.arraycopy(input, 0, output, 0, input.length);
+
+        // Perform real forward FFT
+        // JTransforms performs in-place FFT and returns interleaved complex values
+        fftComputer.realForward(output);
+    }
+
+    // Keep old implementations as fallback (but they won't be called now)
     private void dft(float[] input, float[] output) {
         int inSize = input.length;
         for (int k = 0; k < inSize; k++) {
@@ -279,7 +301,7 @@ public class WhisperUtil {
         }
     }
 
-    private void fft(float[] input, float[] output) {
+    private void fftRecursive(float[] input, float[] output) {
         int inSize = input.length;
         if (inSize == 1) {
             output[0] = input[0];
@@ -310,8 +332,8 @@ public class WhisperUtil {
         float[] evenFft = new float[inSize];
         float[] oddFft = new float[inSize];
 
-        fft(even, evenFft);
-        fft(odd, oddFft);
+        fftRecursive(even, evenFft);
+        fftRecursive(odd, oddFft);
         for (int k = 0; k < inSize / 2; k++) {
             float theta = (float) (2 * Math.PI * k / inSize);
             float re = (float) cos(theta);

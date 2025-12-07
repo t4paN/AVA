@@ -50,5 +50,5 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     implementation(project(":whisper_native"))
-
+    implementation("com.github.wendykierp:JTransforms:3.1")
 }

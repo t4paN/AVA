@@ -42,6 +42,17 @@ class RecordingService : Service() {
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
     }
+    private fun safeToast(msg: String) {
+        try {
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Log.e("ToastFail", "System toast blocked. Falling back.", e)
+
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -170,7 +181,7 @@ class RecordingService : Service() {
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Log.e(TAG, "AudioRecord initialization failed")
-                showToast("Recording init failed")
+                safeToast("Recording init failed")
                 stopSelf()
                 return
             }
@@ -180,7 +191,7 @@ class RecordingService : Service() {
 
             playStartBeep()
 
-            showToast("Recording...")
+            safeToast("Recording...")
 
             recordingThread = Thread {
                 recordAudio(bufferSize)
@@ -194,7 +205,7 @@ class RecordingService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Recording error", e)
             isRecording = false
-            showToast("Recording error: ${e.message}")
+            safeToast("Recording error: ${e.message}")
             stopSelf()
         }
     }
@@ -335,16 +346,16 @@ class RecordingService : Service() {
 
                 handler.post {
                     if (transcription.isEmpty()) {
-                        showToast("Transcription was empty!")
+                        safeToast("Transcription was empty!")
                     } else {
-                        showToast("Result: $transcription")
+                        safeToast("Result: $transcription")
                     }
                 }
 
             } catch (e: Exception) {
                 Log.e(TAG, "Transcription error", e)
                 handler.post {
-                    showToast("Error: ${e.message}")
+                    safeToast("Error: ${e.message}")
                 }
             } finally {
                 isProcessing = false
@@ -355,11 +366,6 @@ class RecordingService : Service() {
         }.start()
     }
 
-    private fun showToast(message: String) {
-        handler.post {
-            Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
-        }
-    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "PRELOAD_WHISPER") {
