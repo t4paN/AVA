@@ -22,6 +22,9 @@ import java.io.File
 import com.greekvoiceassistant.whisper.engine.WhisperEngine
 import com.greekvoiceassistant.whisper.engine.WhisperEngineJava
 import java.io.FileOutputStream
+import com.example.greekvoiceassistant.Contact
+import com.example.greekvoiceassistant.ContactRepository
+import com.example.greekvoiceassistant.SuperFuzzyContactMatcher
 
 
 class RecordingService : Service() {
@@ -34,6 +37,9 @@ class RecordingService : Service() {
     private var isProcessing = false
     private var mediaPlayer: MediaPlayer? = null
     private var recordingThread: Thread? = null
+    
+    // Cache contacts in memory for fuzzy matching
+    private var cachedContacts: List<Contact> = emptyList()
 
     companion object {
         private const val TAG = "RecordingService"
@@ -41,7 +47,41 @@ class RecordingService : Service() {
         private const val SAMPLE_RATE = 16000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
+        
+        // NEW: Store transcription logs for display in FirstFragment
+        private val transcriptionLogs = mutableListOf<TranscriptionLog>()
+        private var logUpdateCallback: (() -> Unit)? = null
+        
+        /**
+         * Get all transcription logs (newest first)
+         */
+        fun getTranscriptionLogs(): List<TranscriptionLog> {
+            return transcriptionLogs.reversed()
+        }
+        
+        /**
+         * Register callback to be notified when new logs are added
+         */
+        fun setLogUpdateCallback(callback: () -> Unit) {
+            logUpdateCallback = callback
+        }
+        
+        /**
+         * Clear callback
+         */
+        fun clearLogUpdateCallback() {
+            logUpdateCallback = null
+        }
+        
+        /**
+         * Clear all logs
+         */
+        fun clearLogs() {
+            transcriptionLogs.clear()
+            logUpdateCallback?.invoke()
+        }
     }
+    
     private fun safeToast(msg: String) {
         try {
             Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
@@ -57,6 +97,11 @@ class RecordingService : Service() {
     override fun onCreate() {
         super.onCreate()
         startSilentNotification()
+        
+        // Load contacts once when service starts
+        cachedContacts = ContactRepository.loadContacts(this)
+        Log.i(TAG, "RecordingService created with ${cachedContacts.size} cached contacts")
+        
         playPrompt()
     }
 
@@ -339,16 +384,28 @@ class RecordingService : Service() {
 
                 val startTime = System.currentTimeMillis()
                 val transcription = whisperEngine?.transcribeFile(outputFile.absolutePath) ?: ""
-                val duration = System.currentTimeMillis() - startTime
+                val transcriptionTime = System.currentTimeMillis() - startTime
 
-                Log.d(TAG, "Transcription took ${duration}ms")
+                Log.d(TAG, "Transcription took ${transcriptionTime}ms")
                 Log.d(TAG, "Transcription result: '$transcription'")
 
-                handler.post {
-                    if (transcription.isEmpty()) {
+                // Handle transcription with fuzzy contact matching
+                if (transcription.isNotEmpty()) {
+                    handleTranscriptionComplete(transcription, transcriptionTime)
+                } else {
+                    // Log empty transcription
+                    val logEntry = TranscriptionLog(
+                        originalTranscript = "(empty)",
+                        fuzzifiedTranscript = "(empty)",
+                        transcriptionTimeMs = transcriptionTime,
+                        matchedContact = null,
+                        confidence = null,
+                        confidenceBreakdown = null
+                    )
+                    addLogEntry(logEntry)
+                    
+                    handler.post {
                         safeToast("Transcription was empty!")
-                    } else {
-                        safeToast("Result: $transcription")
                     }
                 }
 
@@ -364,6 +421,81 @@ class RecordingService : Service() {
                 }
             }
         }.start()
+    }
+
+    // Handle transcription with fuzzy contact matching
+    private fun handleTranscriptionComplete(transcriptionText: String, transcriptionTime: Long) {
+        Log.i(TAG, "=== Contact Matching ===")
+        Log.i(TAG, "Transcription: '$transcriptionText'")
+        
+        // Fuzzy match against contacts
+        val matchResult = SuperFuzzyContactMatcher.findBestMatch(
+            transcription = transcriptionText,
+            contacts = cachedContacts
+        )
+        
+        // TODO: Extract the actual fuzzified transcript from SuperFuzzyContactMatcher
+        // For now, just showing the original transcript twice
+        val fuzzifiedTranscript = transcriptionText.lowercase().trim()
+        
+        if (matchResult != null) {
+            Log.i(TAG, "✓ MATCHED: ${matchResult.contact.displayName}")
+            Log.i(TAG, "  Confidence: ${String.format("%.2f", matchResult.confidence)}")
+            Log.i(TAG, "  Phone: ${matchResult.contact.phoneNumber}")
+            Log.d(TAG, "  Breakdown: ${matchResult.breakdown}")
+            
+            // Create log entry with match details
+            val logEntry = TranscriptionLog(
+                originalTranscript = transcriptionText,
+                fuzzifiedTranscript = fuzzifiedTranscript,
+                transcriptionTimeMs = transcriptionTime,
+                matchedContact = matchResult.contact.displayName,
+                confidence = matchResult.confidence,
+                confidenceBreakdown = matchResult.breakdown
+            )
+            addLogEntry(logEntry)
+            
+            handler.post {
+                safeToast("Match: ${matchResult.contact.displayName} (${String.format("%.2f", matchResult.confidence)})")
+            }
+            
+            // TODO: Initiate phone call
+            // initiateCall(matchResult.contact.phoneNumber)
+            
+        } else {
+            Log.w(TAG, "✗ NO MATCH found")
+            
+            // Create log entry with no match
+            val logEntry = TranscriptionLog(
+                originalTranscript = transcriptionText,
+                fuzzifiedTranscript = fuzzifiedTranscript,
+                transcriptionTimeMs = transcriptionTime,
+                matchedContact = null,
+                confidence = null,
+                confidenceBreakdown = null
+            )
+            addLogEntry(logEntry)
+            
+            handler.post {
+                safeToast("No contact match found")
+            }
+            
+            // TODO: Play "contact not found" TTS message
+            // playContactNotFoundMessage()
+        }
+    }
+    
+    /**
+     * Add a log entry and notify observers
+     */
+    private fun addLogEntry(log: TranscriptionLog) {
+        transcriptionLogs.add(log)
+        Log.d(TAG, "Added log entry. Total logs: ${transcriptionLogs.size}")
+        
+        // Notify FirstFragment to update
+        handler.post {
+            logUpdateCallback?.invoke()
+        }
     }
 
 
