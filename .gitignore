@@ -40,5 +40,8 @@ out/
 *.tflite
 *.bin
 
+# Gradle wrapper jar should be committed
+!gradle/wrapper/gradle-wrapper.jar
+
 # JAR files (Gradle handles dependencies)
 *.jar

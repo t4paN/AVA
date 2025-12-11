@@ -10,8 +10,10 @@ import com.example.greekvoiceassistant.databinding.FragmentFirstBinding
 /**
  * Fragment that displays transcription logs from AVA
  * 
- * Shows a simple scrollable list of all voice recognition attempts
- * with original transcripts, fuzzified versions, timing, and match results
+ * NOW WITH:
+ * - Persistent log loading from SharedPreferences
+ * - Ambiguous candidate display
+ * - "No intent detected" tracking
  */
 class FirstFragment : Fragment() {
 
@@ -29,7 +31,10 @@ class FirstFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
-        // Initial load of logs
+        // Load persisted logs on first view creation
+        RecordingService.loadPersistedLogs(requireContext())
+        
+        // Initial display of logs
         updateLogDisplay()
         
         // Register callback to update when new logs arrive
@@ -46,21 +51,39 @@ class FirstFragment : Fragment() {
 
     /**
      * Update the TextView with all transcription logs
+     * 
+     * Shows:
+     * - Original + fuzzified transcripts
+     * - Transcription time
+     * - Match results OR ambiguous candidates OR no intent
      */
     private fun updateLogDisplay() {
         val logs = RecordingService.getTranscriptionLogs()
         
         if (logs.isEmpty()) {
-            binding.textviewFirst.text = "No transcription logs yet.\n\nPress the microphone button to start recording."
+            binding.textviewFirst.text = buildString {
+                appendLine("=== AVA Transcription Logs ===")
+                appendLine()
+                appendLine("No transcription logs yet.")
+                appendLine()
+                appendLine("Press the microphone button to start recording.")
+                appendLine()
+                appendLine("Logs persist across app restarts!")
+            }
         } else {
             // Build the display string from all logs
             val displayText = buildString {
                 appendLine("=== AVA Transcription Logs ===")
+                appendLine("(${logs.size} total, showing newest first)")
                 appendLine()
+                
                 for (log in logs) {
                     append(log.toDisplayString())
                     appendLine()
                 }
+                
+                appendLine()
+                appendLine("--- End of Logs ---")
             }
             binding.textviewFirst.text = displayText
         }

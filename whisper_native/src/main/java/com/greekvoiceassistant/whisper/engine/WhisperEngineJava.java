@@ -10,6 +10,7 @@ import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
 import org.tensorflow.lite.Tensor;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
+import org.tensorflow.lite.gpu.GpuDelegate;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -90,9 +91,10 @@ public class WhisperEngineJava implements WhisperEngine {
         ByteBuffer tfliteModel = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
 
         Interpreter.Options options = new Interpreter.Options();
-        options.setNumThreads(Runtime.getRuntime().availableProcessors());
-
+        options.setUseXNNPACK(true);
+        options.setNumThreads(6);
         mInterpreter = new Interpreter(tfliteModel, options);
+        Log.d("WhisperEngine", "XNNPACK enabled: " + options.getUseXNNPACK());
     }
 
     private float[] getMelSpectrogram(String wavePath) {
