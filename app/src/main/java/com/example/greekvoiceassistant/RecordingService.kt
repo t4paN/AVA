@@ -33,14 +33,19 @@ import org.json.JSONObject
 class RecordingService : Service() {
 
     private var audioRecord: AudioRecord? = null
-    private lateinit var outputFile: File
     private val handler = Handler(Looper.getMainLooper())
-    private var whisperEngine: WhisperEngine? = null
     private var isRecording = false
     private var isProcessing = false
     private var mediaPlayer: MediaPlayer? = null
     private var recordingThread: Thread? = null
-    
+    private var vadPipeline: VadAudioPipeline? = null
+
+    // Timeout runnable as a field so we can cancel it specifically
+    private val timeoutRunnable = Runnable {
+        Log.d(TAG, "4-second timeout reached")
+        stopRecordingImmediately()
+    }
+
     // Cache contacts in memory for fuzzy matching
     private var cachedContacts: List<Contact> = emptyList()
 
@@ -50,46 +55,51 @@ class RecordingService : Service() {
         private const val SAMPLE_RATE = 16000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        
+
         // SharedPreferences for persisting logs
         private const val PREFS_NAME = "ava_transcription_logs"
         private const val PREFS_KEY_LOGS = "logs_json"
         private const val MAX_STORED_LOGS = 50
-        
+
         // Store transcription logs for display in FirstFragment
         private val transcriptionLogs = mutableListOf<TranscriptionLog>()
         private var logUpdateCallback: (() -> Unit)? = null
-        
+
+        // PERSISTENT WHISPER ENGINE - survives service destroy/recreate
+        @Volatile
+        private var sharedWhisperEngine: WhisperEngine? = null
+        private val whisperLock = Any()
+
         fun getTranscriptionLogs(): List<TranscriptionLog> {
             return transcriptionLogs.reversed()
         }
-        
+
         fun setLogUpdateCallback(callback: () -> Unit) {
             logUpdateCallback = callback
         }
-        
+
         fun clearLogUpdateCallback() {
             logUpdateCallback = null
         }
-        
+
         fun clearLogs(context: Context) {
             transcriptionLogs.clear()
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.edit().remove(PREFS_KEY_LOGS).apply()
             logUpdateCallback?.invoke()
         }
-        
+
         fun loadPersistedLogs(context: Context) {
             try {
                 val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val jsonString = prefs.getString(PREFS_KEY_LOGS, null) ?: return
-                
+
                 val jsonArray = JSONArray(jsonString)
                 transcriptionLogs.clear()
-                
+
                 for (i in 0 until jsonArray.length()) {
                     val json = jsonArray.getJSONObject(i)
-                    
+
                     val ambiguousCandidates = if (json.has("ambiguousCandidates")) {
                         val candidatesArray = json.getJSONArray("ambiguousCandidates")
                         List(candidatesArray.length()) { idx ->
@@ -100,7 +110,7 @@ class RecordingService : Service() {
                             )
                         }
                     } else null
-                    
+
                     val log = TranscriptionLog(
                         timestamp = json.getLong("timestamp"),
                         originalTranscript = json.getString("originalTranscript"),
@@ -112,22 +122,22 @@ class RecordingService : Service() {
                         ambiguousCandidates = ambiguousCandidates,
                         noIntentDetected = json.optBoolean("noIntentDetected", false)
                     )
-                    
+
                     transcriptionLogs.add(log)
                 }
-                
+
                 Log.i(TAG, "Loaded ${transcriptionLogs.size} persisted logs")
-                
+
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading persisted logs", e)
             }
         }
-        
+
         private fun saveLogsToPrefs(context: Context) {
             try {
                 val jsonArray = JSONArray()
                 val logsToSave = transcriptionLogs.takeLast(MAX_STORED_LOGS)
-                
+
                 for (log in logsToSave) {
                     val json = JSONObject().apply {
                         put("timestamp", log.timestamp)
@@ -138,7 +148,7 @@ class RecordingService : Service() {
                         put("confidence", log.confidence)
                         put("confidenceBreakdown", log.confidenceBreakdown)
                         put("noIntentDetected", log.noIntentDetected)
-                        
+
                         if (log.ambiguousCandidates != null) {
                             val candidatesArray = JSONArray()
                             for ((name, conf) in log.ambiguousCandidates) {
@@ -152,18 +162,18 @@ class RecordingService : Service() {
                     }
                     jsonArray.put(json)
                 }
-                
+
                 val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 prefs.edit().putString(PREFS_KEY_LOGS, jsonArray.toString()).apply()
-                
+
                 Log.d(TAG, "Saved ${logsToSave.size} logs to SharedPreferences")
-                
+
             } catch (e: Exception) {
                 Log.e(TAG, "Error saving logs to prefs", e)
             }
         }
     }
-    
+
     private fun safeToast(msg: String) {
         try {
             Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
@@ -178,14 +188,17 @@ class RecordingService : Service() {
     override fun onCreate() {
         super.onCreate()
         startSilentNotification()
-        
+
         // Load persisted logs on startup
         loadPersistedLogs(this)
-        
+
         // Load contacts once when service starts
         cachedContacts = ContactRepository.loadContacts(this)
         Log.i(TAG, "RecordingService created with ${cachedContacts.size} cached contacts")
-        
+
+        // Initialize VAD pipeline
+        vadPipeline = VadAudioPipeline(this)
+
         playPrompt()
     }
 
@@ -228,10 +241,7 @@ class RecordingService : Service() {
                 mediaPlayer = null
 
                 handler.postDelayed({
-                    if (whisperEngine == null) {
-                        Log.d(TAG, "First run - initializing Whisper...")
-                        initializeWhisper()
-                    }
+                    initializeWhisperIfNeeded()
                     prepareRecorder()
                 }, 100)
             }
@@ -240,9 +250,7 @@ class RecordingService : Service() {
                 Log.e(TAG, "MediaPlayer error: what=$what, extra=$extra")
                 mp.release()
                 mediaPlayer = null
-                if (whisperEngine == null) {
-                    initializeWhisper()
-                }
+                initializeWhisperIfNeeded()
                 prepareRecorder()
                 true
             }
@@ -251,38 +259,49 @@ class RecordingService : Service() {
 
         } catch (e: Exception) {
             Log.e(TAG, "Error playing prompt", e)
-            if (whisperEngine == null) {
-                initializeWhisper()
-            }
+            initializeWhisperIfNeeded()
             prepareRecorder()
         }
     }
 
-    private fun initializeWhisper() {
-        Log.d(TAG, "Initializing Whisper...")
-        try {
-            Log.d(TAG, "Copying model from assets...")
-
-            val modelPath = File(filesDir, "whisper-base.TOP_WORLD.tflite").absolutePath
-            assets.open("whisper-base.TOP_WORLD.tflite").use { input ->
-                FileOutputStream(modelPath).use { output ->
-                    input.copyTo(output)
-                }
+    /**
+     * Initialize Whisper only if not already loaded.
+     * Uses persistent sharedWhisperEngine to avoid reinitializing on every recording.
+     */
+    private fun initializeWhisperIfNeeded() {
+        synchronized(whisperLock) {
+            if (sharedWhisperEngine != null) {
+                Log.d(TAG, "Reusing existing Whisper engine (saves ~740ms)")
+                return
             }
 
-            Log.d(TAG, "Copying filters_vocab from assets...")
-            val filtersVocabPath = File(filesDir, "filters_vocab_multilingual.bin").absolutePath
-            assets.open("filters_vocab_multilingual.bin").use { input ->
-                FileOutputStream(filtersVocabPath).use { output ->
-                    input.copyTo(output)
-                }
-            }
+            Log.d(TAG, "First-time Whisper initialization...")
+            try {
+                Log.d(TAG, "Copying model from assets...")
 
-            whisperEngine = WhisperEngineJava(this)
-            whisperEngine?.initialize(modelPath, filtersVocabPath, true)
-            Log.d(TAG, "Whisper initialized")
-        } catch (e: Exception) {
-            Log.e(TAG, "Whisper init error", e)
+                val modelPath = File(filesDir, "whisper-base.TOP_WORLD.tflite").absolutePath
+                assets.open("whisper-base.TOP_WORLD.tflite").use { input ->
+                    FileOutputStream(modelPath).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                Log.d(TAG, "Copying filters_vocab from assets...")
+                val filtersVocabPath = File(filesDir, "filters_vocab_multilingual.bin").absolutePath
+                assets.open("filters_vocab_multilingual.bin").use { input ->
+                    FileOutputStream(filtersVocabPath).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                val engine = WhisperEngineJava(this)
+                engine.initialize(modelPath, filtersVocabPath, true)
+
+                sharedWhisperEngine = engine
+                Log.d(TAG, "Whisper initialized and cached")
+            } catch (e: Exception) {
+                Log.e(TAG, "Whisper init error", e)
+            }
         }
     }
 
@@ -292,7 +311,6 @@ class RecordingService : Service() {
         try {
             Log.d(TAG, "Preparing AudioRecord...")
             isRecording = true
-            outputFile = File(cacheDir, "voice_input.wav")
 
             val bufferSize = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE,
@@ -318,7 +336,8 @@ class RecordingService : Service() {
             audioRecord?.startRecording()
             Log.d(TAG, "Recording started!")
 
-            playStartBeep()
+            // No start beep anymore - just a log
+            Log.d(TAG, "Start beep removed - recording immediately")
 
             safeToast("Recording...")
 
@@ -327,9 +346,8 @@ class RecordingService : Service() {
             }
             recordingThread?.start()
 
-            handler.postDelayed({
-                stopRecordingAndPlayBeep()
-            }, RECORDING_DURATION_MS)
+            // Schedule timeout - use the field runnable so we can cancel it
+            handler.postDelayed(timeoutRunnable, RECORDING_DURATION_MS)
 
         } catch (e: Exception) {
             Log.e(TAG, "Recording error", e)
@@ -340,98 +358,118 @@ class RecordingService : Service() {
     }
 
     private fun recordAudio(bufferSize: Int) {
-        val data = ByteArray(bufferSize)
-        val allData = mutableListOf<Byte>()
+        val frameSize = VadAudioPipeline.FRAME_SIZE_SAMPLES
+        val frameBuffer = ShortArray(frameSize)
+        var totalSamplesRead = 0
+        val maxSamples = (RECORDING_DURATION_MS * SAMPLE_RATE / 1000).toInt() // 64000 samples for 4 sec
+
+        Log.d(TAG, "Recording up to $maxSamples samples (${RECORDING_DURATION_MS}ms)")
+
+        // Reset VAD pipeline for new recording
+        vadPipeline?.reset()
+
+        var speechEndDetected = false
 
         try {
-            while (isRecording) {
-                val read = audioRecord?.read(data, 0, bufferSize) ?: 0
-                if (read > 0) {
-                    for (i in 0 until read) {
-                        allData.add(data[i])
+            while (isRecording && totalSamplesRead < maxSamples && !speechEndDetected) {
+                // Read exactly one frame worth of samples
+                val shortsRead = audioRecord?.read(frameBuffer, 0, frameSize) ?: 0
+
+                if (shortsRead == frameSize) {
+                    totalSamplesRead += shortsRead
+
+                    // Feed frame to VAD
+                    val result = vadPipeline?.processFrame(frameBuffer)
+
+                    if (result == VadAudioPipeline.ProcessResult.SPEECH_END) {
+                        val durationMs = (totalSamplesRead * 1000) / SAMPLE_RATE
+                        Log.d(TAG, "VAD detected end of speech at ${durationMs}ms")
+                        speechEndDetected = true
+
+                        // DON'T stop recording here or modify isRecording flag
+                        // Let the loop finish naturally for clean AudioRecord state
                     }
+                } else if (shortsRead < 0) {
+                    Log.e(TAG, "AudioRecord read error: $shortsRead")
+                    break
                 }
             }
 
-            val audioData = allData.toByteArray()
-            Log.d(TAG, "Recorded ${audioData.size} bytes")
+            val finalDurationMs = (totalSamplesRead * 1000) / SAMPLE_RATE
+            Log.d(TAG, "Recording loop finished.")
+            Log.d(TAG, "  Total samples: $totalSamplesRead (${finalDurationMs}ms)")
+            Log.d(TAG, "  Speech detected: ${vadPipeline?.hasSpeechBeenDetected()}")
+            Log.d(TAG, "  Speech end triggered early: $speechEndDetected")
 
-            WaveUtil.createWaveFile(
-                outputFile.absolutePath,
-                audioData,
-                SAMPLE_RATE,
-                1,
-                2
-            )
-            Log.d(TAG, "WAV file created: ${outputFile.absolutePath}")
+            // Signal that recording is done
+            handler.post {
+                if (isRecording) {  // Only if we haven't already been stopped by timeout
+                    stopRecordingImmediately()
+                }
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "Error during recording", e)
+            handler.post {
+                if (isRecording) {
+                    stopRecordingImmediately()
+                }
+            }
         }
     }
 
-    private fun stopRecordingAndPlayBeep() {
-        if (!isRecording) return
+    /**
+     * Stop recording immediately and go straight to transcription.
+     * NO BEEP - saves ~800ms per recording.
+     */
+    private fun stopRecordingImmediately() {
+        if (!isRecording) {
+            Log.d(TAG, "stopRecordingImmediately called but already stopped, ignoring")
+            return
+        }
 
         try {
             Log.d(TAG, "Stopping recorder...")
             isRecording = false
 
-            audioRecord?.stop()
-            audioRecord?.release()
+            // Cancel ONLY the 4-second timeout
+            handler.removeCallbacks(timeoutRunnable)
+
+            // Wait for recording thread to finish cleanly (give it up to 1 second)
+            recordingThread?.join(1000)
+
+            if (recordingThread?.isAlive == true) {
+                Log.w(TAG, "Recording thread still alive after 1 second timeout")
+            }
+
+            // Now safely stop AudioRecord
+            try {
+                audioRecord?.stop()
+                Log.d(TAG, "AudioRecord stopped")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping AudioRecord", e)
+            }
+
+            try {
+                audioRecord?.release()
+                Log.d(TAG, "AudioRecord released")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing AudioRecord", e)
+            }
+
             audioRecord = null
 
-            recordingThread?.join(500)
-
-            playStopBeep()
+            // NO BEEP - go straight to transcription
+            Log.d(TAG, "Skipping stop beep, going directly to transcription")
+            if (!isProcessing) {
+                transcribeAudio()
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "Stop recording error", e)
-            transcribeAudio()
-        }
-    }
-
-    private fun playStartBeep() {
-        // DISABLED for testing - beep was overlapping with recording start **** Change to vibrate/buzz instead
-        Log.d(TAG, "Start beep disabled for testing")
-    }
-
-    private fun playStopBeep() {
-        try {
-            Log.d(TAG, "Playing stop beep...")
-            mediaPlayer = MediaPlayer.create(this, R.raw.beep)
-
-            mediaPlayer?.setOnCompletionListener {
-                Log.d(TAG, "Stop beep finished")
-                it.release()
-                mediaPlayer = null
-
-                if (isProcessing) {
-                    Log.d(TAG, "Already processing - skipping this transcription")
-                    stopSelf()
-                    return@setOnCompletionListener
-                }
-
-                transcribeAudio()
-            }
-
-            mediaPlayer?.setOnErrorListener { mp, what, extra ->
-                Log.e(TAG, "MediaPlayer stop beep error: what=$what, extra=$extra")
-                mp.release()
-                mediaPlayer = null
-
-                if (!isProcessing) {
-                    transcribeAudio()
-                }
-                true
-            }
-
-            mediaPlayer?.start()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error playing stop beep", e)
+            // Still try to transcribe even if stop failed
             if (!isProcessing) {
-                transcribeAudio()
+                handler.postDelayed({ transcribeAudio() }, 100)
             }
         }
     }
@@ -442,12 +480,40 @@ class RecordingService : Service() {
                 isProcessing = true
 
                 Log.d(TAG, "=== Starting transcription ===")
-                Log.d(TAG, "Audio file: ${outputFile.absolutePath}")
-                Log.d(TAG, "File exists: ${outputFile.exists()}")
-                Log.d(TAG, "File size: ${outputFile.length()} bytes")
+
+                // Check if we have speech to transcribe
+                if (vadPipeline?.hasSpeechBeenDetected() != true) {
+                    Log.w(TAG, "No speech detected in recording")
+                    val logEntry = TranscriptionLog(
+                        originalTranscript = "(no speech detected)",
+                        fuzzifiedTranscript = "(no speech detected)",
+                        transcriptionTimeMs = 0,
+                        matchedContact = null,
+                        confidence = null,
+                        confidenceBreakdown = null
+                    )
+                    addLogEntry(logEntry)
+
+                    handler.post {
+                        safeToast("No speech detected")
+                    }
+                    return@Thread
+                }
+
+                // Get accumulated audio as float array
+                val audioSamples = vadPipeline?.getAccumulatedAudioFloat() ?: FloatArray(0)
+                val audioDurationMs = (audioSamples.size * 1000) / SAMPLE_RATE
+                Log.d(TAG, "Audio samples: ${audioSamples.size} (${audioDurationMs}ms)")
+
+                // Optional: Log audio statistics for debugging
+                if (audioSamples.isNotEmpty()) {
+                    val maxAmp = audioSamples.maxOrNull() ?: 0f
+                    val minAmp = audioSamples.minOrNull() ?: 0f
+                    Log.d(TAG, "Audio amplitude range: [$minAmp, $maxAmp]")
+                }
 
                 val startTime = System.currentTimeMillis()
-                val transcription = whisperEngine?.transcribeFile(outputFile.absolutePath) ?: ""
+                val transcription = sharedWhisperEngine?.transcribeBuffer(audioSamples) ?: ""
                 val transcriptionTime = System.currentTimeMillis() - startTime
 
                 Log.d(TAG, "Transcription took ${transcriptionTime}ms")
@@ -465,7 +531,7 @@ class RecordingService : Service() {
                         confidenceBreakdown = null
                     )
                     addLogEntry(logEntry)
-                    
+
                     handler.post {
                         safeToast("Transcription was empty!")
                     }
@@ -478,37 +544,36 @@ class RecordingService : Service() {
                 }
             } finally {
                 isProcessing = false
-                handler.post {
-                    stopSelf()
-                }
+                // DON'T call stopSelf() - keep service alive for next recording
+                Log.d(TAG, "Transcription complete, service staying alive for next recording")
             }
         }.start()
     }
 
     /**
      * Handle transcription with intent detection and routing
-     * 
+     *
      * NEW: Detects CALL, FLASHLIGHT, and RADIO intents before processing
      */
     private fun handleTranscriptionComplete(transcriptionText: String, transcriptionTime: Long) {
         Log.i(TAG, "=== Processing Transcription ===")
         Log.i(TAG, "Transcription: '$transcriptionText'")
-        
+
         // Clean and detect intent
         val cleaned = SuperFuzzyContactMatcher.cleanTranscription(transcriptionText)
         val (intent, stripped) = SuperFuzzyContactMatcher.detectAndStripIntent(cleaned)
-        
+
         val fuzzifiedTranscript = cleaned
-        
+
         when (intent) {
             SuperFuzzyContactMatcher.Intent.CALL -> {
                 Log.i(TAG, "CALL intent detected, processing contact match...")
                 handleCallIntent(transcriptionText, fuzzifiedTranscript, transcriptionTime)
             }
-            
+
             SuperFuzzyContactMatcher.Intent.FLASHLIGHT -> {
                 Log.i(TAG, "FLASHLIGHT intent detected")
-                
+
                 val logEntry = TranscriptionLog(
                     originalTranscript = transcriptionText,
                     fuzzifiedTranscript = fuzzifiedTranscript,
@@ -518,18 +583,18 @@ class RecordingService : Service() {
                     confidenceBreakdown = "Flashlight command recognized"
                 )
                 addLogEntry(logEntry)
-                
+
                 handler.post {
                     safeToast("Flashlight detected!")
                 }
-                
+
                 // TODO: Implement flashlight toggle
                 // toggleFlashlight()
             }
-            
+
             SuperFuzzyContactMatcher.Intent.RADIO -> {
                 Log.i(TAG, "RADIO intent detected")
-                
+
                 val logEntry = TranscriptionLog(
                     originalTranscript = transcriptionText,
                     fuzzifiedTranscript = fuzzifiedTranscript,
@@ -539,18 +604,18 @@ class RecordingService : Service() {
                     confidenceBreakdown = "Radio command recognized"
                 )
                 addLogEntry(logEntry)
-                
+
                 handler.post {
                     safeToast("Radio detected!")
                 }
-                
+
                 // TODO: Implement radio playback
                 // playRadio()
             }
-            
+
             null -> {
                 Log.w(TAG, "No intent detected")
-                
+
                 val logEntry = TranscriptionLog(
                     originalTranscript = transcriptionText,
                     fuzzifiedTranscript = fuzzifiedTranscript,
@@ -561,14 +626,14 @@ class RecordingService : Service() {
                     noIntentDetected = true
                 )
                 addLogEntry(logEntry)
-                
+
                 handler.post {
                     safeToast("No command detected")
                 }
             }
         }
     }
-    
+
     /**
      * Handle CALL intent - match contact and initiate call
      */
@@ -577,13 +642,13 @@ class RecordingService : Service() {
             transcription = originalTranscript,
             contacts = cachedContacts
         )
-        
+
         if (matchResult != null) {
             Log.i(TAG, "✓ MATCHED: ${matchResult.contact.displayName}")
             Log.i(TAG, "  Confidence: ${String.format("%.2f", matchResult.confidence)}")
             Log.i(TAG, "  Phone: ${matchResult.contact.phoneNumber}")
             Log.d(TAG, "  Breakdown: ${matchResult.breakdown}")
-            
+
             val logEntry = TranscriptionLog(
                 originalTranscript = originalTranscript,
                 fuzzifiedTranscript = fuzzifiedTranscript,
@@ -593,21 +658,21 @@ class RecordingService : Service() {
                 confidenceBreakdown = matchResult.breakdown
             )
             addLogEntry(logEntry)
-            
+
             handler.post {
                 safeToast("Match: ${matchResult.contact.displayName} (${String.format("%.2f", matchResult.confidence)})")
             }
-            
+
             // TODO: Initiate phone call
             // initiateCall(matchResult.contact.phoneNumber)
-            
+
         } else {
             // Check if ambiguous or no match
             val ambiguousCandidates = SuperFuzzyContactMatcher.getLastAmbiguousCandidates()
-            
+
             if (ambiguousCandidates != null && ambiguousCandidates.isNotEmpty()) {
                 Log.w(TAG, "✗ AMBIGUOUS MATCH")
-                
+
                 val logEntry = TranscriptionLog(
                     originalTranscript = originalTranscript,
                     fuzzifiedTranscript = fuzzifiedTranscript,
@@ -615,19 +680,19 @@ class RecordingService : Service() {
                     matchedContact = null,
                     confidence = null,
                     confidenceBreakdown = null,
-                    ambiguousCandidates = ambiguousCandidates.map { 
-                        Pair(it.contact.displayName, it.confidence) 
+                    ambiguousCandidates = ambiguousCandidates.map {
+                        Pair(it.contact.displayName, it.confidence)
                     }
                 )
                 addLogEntry(logEntry)
-                
+
                 handler.post {
                     safeToast("Ambiguous: ${ambiguousCandidates[0].contact.displayName} vs ${ambiguousCandidates[1].contact.displayName}")
                 }
-                
+
             } else {
                 Log.w(TAG, "✗ NO MATCH found")
-                
+
                 val logEntry = TranscriptionLog(
                     originalTranscript = originalTranscript,
                     fuzzifiedTranscript = fuzzifiedTranscript,
@@ -637,30 +702,30 @@ class RecordingService : Service() {
                     confidenceBreakdown = null
                 )
                 addLogEntry(logEntry)
-                
+
                 handler.post {
                     safeToast("No contact match found")
                 }
             }
-            
+
             // TODO: Play "contact not found" TTS message
             // playContactNotFoundMessage()
         }
-        
+
         SuperFuzzyContactMatcher.clearAmbiguousCandidates()
     }
-    
+
     private fun addLogEntry(log: TranscriptionLog) {
         transcriptionLogs.add(log)
-        
+
         if (transcriptionLogs.size > MAX_STORED_LOGS) {
             transcriptionLogs.removeAt(0)
         }
-        
+
         Log.d(TAG, "Added log entry. Total logs: ${transcriptionLogs.size}")
-        
+
         saveLogsToPrefs(this)
-        
+
         handler.post {
             logUpdateCallback?.invoke()
         }
@@ -669,29 +734,60 @@ class RecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "PRELOAD_WHISPER") {
             Log.d(TAG, "Preloading Whisper...")
-            if (whisperEngine == null) {
-                initializeWhisper()
-            }
-            stopSelf()
-            return START_NOT_STICKY
+            initializeWhisperIfNeeded()
+            return START_STICKY
         }
 
-        return START_NOT_STICKY
+        // Check if already busy
+        if (isRecording || isProcessing) {
+            Log.w(TAG, "Service already busy, ignoring duplicate start request")
+            return START_STICKY
+        }
+
+        // Start a new recording (whether first time or subsequent)
+        Log.d(TAG, "Starting new recording session")
+        handler.postDelayed({
+            playPrompt()
+        }, 100)
+
+        return START_STICKY
     }
 
     override fun onDestroy() {
         super.onDestroy()
+
+        // Clean up handler callbacks
+        handler.removeCallbacks(timeoutRunnable)
         handler.removeCallbacksAndMessages(null)
+
         isRecording = false
+
         try {
             audioRecord?.stop()
             audioRecord?.release()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cleaning up AudioRecord", e)
+        }
+
         try {
             mediaPlayer?.release()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cleaning up MediaPlayer", e)
+        }
+
+        try {
+            vadPipeline?.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cleaning up VAD pipeline", e)
+        }
+
         audioRecord = null
         mediaPlayer = null
+        vadPipeline = null
+
+        // DON'T null out sharedWhisperEngine - it persists for next service instance
+
+        Log.d(TAG, "RecordingService destroyed (WhisperEngine kept alive)")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

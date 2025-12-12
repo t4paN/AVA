@@ -80,9 +80,26 @@ public class WhisperEngineJava implements WhisperEngine {
 
     @Override
     public String transcribeBuffer(float[] samples) {
-        return null;
-    }
+        Log.d(TAG, "Transcribing from PCM buffer, samples: " + samples.length);
 
+        // Pad or trim to fixed input size (30 seconds at 16kHz)
+        int fixedInputSize = WhisperUtil.WHISPER_SAMPLE_RATE * WhisperUtil.WHISPER_CHUNK_SIZE;
+        float[] inputSamples = new float[fixedInputSize];
+        int copyLength = Math.min(samples.length, fixedInputSize);
+        System.arraycopy(samples, 0, inputSamples, 0, copyLength);
+
+        // Calculate mel spectrogram
+        Log.d(TAG, "Calculating Mel spectrogram from buffer...");
+        int cores = Runtime.getRuntime().availableProcessors();
+        float[] melSpectrogram = mWhisperUtil.getMelSpectrogram(inputSamples, inputSamples.length, cores);
+        Log.d(TAG, "Mel spectrogram calculated!");
+
+        // Run inference
+        String result = runInference(melSpectrogram);
+        Log.d(TAG, "Inference complete!");
+
+        return result;
+    }
     private void loadModel(String modelPath) throws IOException {
         FileInputStream fileInputStream = new FileInputStream(modelPath);
         FileChannel fileChannel = fileInputStream.getChannel();

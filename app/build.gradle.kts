@@ -53,4 +53,5 @@ dependencies {
     implementation("com.github.wendykierp:JTransforms:3.1")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4")
+    implementation("com.github.gkonovalov.android-vad:silero:2.0.10")
 }
