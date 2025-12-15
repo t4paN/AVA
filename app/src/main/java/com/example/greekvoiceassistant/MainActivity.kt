@@ -1,3 +1,4 @@
+//MainActivity.kt
 package com.example.greekvoiceassistant
 
 import android.Manifest
@@ -49,9 +50,16 @@ class MainActivity : AppCompatActivity() {
         setupActionBarWithNavController(navController, appBarConfiguration)
 
         binding.fab.setOnClickListener { view ->
-            Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG)
-                .setAction("Action", null)
-                .setAnchorView(R.id.fab).show()
+            // Send broadcast to refresh contacts (will take effect after restart)
+            sendBroadcast(Intent("REFRESH_CONTACTS"))
+
+            // Nuclear reset - kills process, restarts clean
+            val nukeIntent = Intent(this, RecordingService::class.java).apply {
+                action = RecordingService.ACTION_NUKE_APP
+            }
+            startService(nukeIntent)
+
+            Snackbar.make(view, "Resetting...", Snackbar.LENGTH_SHORT).show()
         }
 
         requestPermissionsIfNeeded()
@@ -106,4 +114,3 @@ class MainActivity : AppCompatActivity() {
                 || super.onSupportNavigateUp()
     }
 }
-

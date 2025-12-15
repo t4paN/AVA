@@ -4,12 +4,7 @@
 local.properties
 
 # Android Studio
-.idea/caches/
-.idea/libraries/
-.idea/modules.xml
-.idea/workspace.xml
-.idea/navEditor.xml
-.idea/assetWizardSettings.xml
+.idea/
 
 # Logs
 *.log
@@ -19,7 +14,7 @@ local.properties
 *.ap_
 *.aab
 
-# Keystore (IMPORTANT: don’t commit signing keys)
+# Keystore (IMPORTANT: don't commit signing keys)
 *.keystore
 *.jks
 
@@ -40,8 +35,10 @@ out/
 *.tflite
 *.bin
 
-# Gradle wrapper jar should be committed
-!gradle/wrapper/gradle-wrapper.jar
-
-# JAR files (Gradle handles dependencies)
-*.jar
+# Build caches and temp folders
+whisper_native/src/main/cpp/D/
+wrapper/
+caches/
+daemon/
+kotlin-profile/
+native/

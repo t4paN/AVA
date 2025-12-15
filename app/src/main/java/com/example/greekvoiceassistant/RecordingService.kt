@@ -1,11 +1,15 @@
+//RecordingService.kt
+
 package com.example.greekvoiceassistant
 
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaPlayer
@@ -49,6 +53,16 @@ class RecordingService : Service() {
     // Cache contacts in memory for fuzzy matching
     private var cachedContacts: List<Contact> = emptyList()
 
+    // Broadcast receiver for contact refresh
+    private val refreshReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "REFRESH_CONTACTS") {
+                cachedContacts = ContactRepository.reloadContacts(this@RecordingService)
+                Log.i(TAG, "Contacts refreshed: ${cachedContacts.size}")
+            }
+        }
+    }
+
     companion object {
         private const val TAG = "RecordingService"
         private const val RECORDING_DURATION_MS = 4000L
@@ -60,6 +74,9 @@ class RecordingService : Service() {
         private const val PREFS_NAME = "ava_transcription_logs"
         private const val PREFS_KEY_LOGS = "logs_json"
         private const val MAX_STORED_LOGS = 50
+
+        // Nuclear reset action
+        const val ACTION_NUKE_APP = "NUKE_APP"
 
         // Store transcription logs for display in FirstFragment
         private val transcriptionLogs = mutableListOf<TranscriptionLog>()
@@ -195,6 +212,10 @@ class RecordingService : Service() {
         // Load contacts once when service starts
         cachedContacts = ContactRepository.loadContacts(this)
         Log.i(TAG, "RecordingService created with ${cachedContacts.size} cached contacts")
+
+        // Register broadcast receiver for contact refresh
+        val filter = IntentFilter("REFRESH_CONTACTS")
+        registerReceiver(refreshReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
 
         // Initialize VAD pipeline
         vadPipeline = VadAudioPipeline(this)
@@ -731,7 +752,43 @@ class RecordingService : Service() {
         }
     }
 
+    /**
+     * Nuclear option: kill the entire process.
+     * All native resources (Whisper, NNAPI, AudioRecord) die with the process.
+     */
+    private fun nukeAppProcess() {
+        try {
+            // Stop foreground notification
+            stopForeground(STOP_FOREGROUND_REMOVE)
+
+            // Stop service
+            stopSelf()
+
+            // Relaunch app with cleared task
+            val relaunchIntent = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+            startActivity(relaunchIntent)
+
+            // Kill process - this releases ALL native memory
+            android.os.Process.killProcess(android.os.Process.myPid())
+            kotlin.system.exitProcess(0)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during nuke", e)
+            // Force kill anyway
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // NUKE handler - must be first, before any other logic
+        if (intent?.action == ACTION_NUKE_APP) {
+            Log.w(TAG, "☢️ NUKE_APP received - killing process")
+            nukeAppProcess()
+            return START_NOT_STICKY
+        }
+
         if (intent?.action == "PRELOAD_WHISPER") {
             Log.d(TAG, "Preloading Whisper...")
             initializeWhisperIfNeeded()
@@ -755,6 +812,13 @@ class RecordingService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+
+        // Unregister broadcast receiver
+        try {
+            unregisterReceiver(refreshReceiver)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering receiver", e)
+        }
 
         // Clean up handler callbacks
         handler.removeCallbacks(timeoutRunnable)

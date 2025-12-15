@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:clickable="true"
     android:padding="16dp"
     tools:context=".FirstFragment">
 
@@ -10,9 +11,9 @@
         android:id="@+id/textview_first"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textSize="12sp"
         android:fontFamily="monospace"
         android:text="No logs yet"
-        android:textIsSelectable="true" />
+        android:textIsSelectable="true"
+        android:textSize="12sp" />
 
 </androidx.core.widget.NestedScrollView>

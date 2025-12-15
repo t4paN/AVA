@@ -163,7 +163,7 @@ object SuperFuzzyContactMatcher {
             val (score, breakdown) = matchContact(originalTokens, mergedTokens, contact)
             
             // Only log scores above threshold
-            if (score > 0.5) {
+            if (score > 0.250) {
                 Log.d(TAG, "  '${contact.displayName}' -> ${String.format("%.3f", score)} | $breakdown")
             }
             
@@ -338,6 +338,14 @@ object SuperFuzzyContactMatcher {
     /**
      * Match transcription tokens against a contact
      */
+    /**
+     * Match transcription tokens against a contact
+     * ENFORCES left-to-right token order
+     */
+    /**
+     * Match transcription tokens against a contact
+     * ENFORCES left-to-right token order AND character order
+     */
     private fun matchContact(
         originalTokens: List<String>,
         mergedTokens: List<String>,
@@ -345,54 +353,107 @@ object SuperFuzzyContactMatcher {
     ): Pair<Double, String> {
         val normalizedContact = normalizeGreek(contact.displayName)
         val contactTokens = normalizedContact.split(" ").filter { it.isNotEmpty() }
-        
+
         var totalScore = 0.0
         val breakdown = mutableListOf<String>()
-        
-        // 1. Best token-to-token score (60% weight)
+
+        // 1. Best token-to-token score WITH POSITION ENFORCEMENT (60% weight)
         var bestTokenScore = 0.0
         var bestTokenMatch = ""
-        for (spoken in mergedTokens) {
-            for (ct in contactTokens) {
+
+        // Track which contact token positions we've matched to prevent backwards matching
+        val matchedContactIndices = mutableSetOf<Int>()
+
+        for ((spokenIdx, spoken) in mergedTokens.withIndex()) {
+            var bestScoreForThisToken = 0.0
+            var bestMatchForThisToken = ""
+            var bestContactIdx = -1
+
+            for ((ctIdx, ct) in contactTokens.withIndex()) {
+                // CRITICAL: Only allow matching if this contact token comes AFTER
+                // any previously matched contact tokens (enforces left-to-right)
+                val minAllowedIdx = matchedContactIndices.maxOrNull()?.plus(1) ?: 0
+                if (ctIdx < minAllowedIdx) {
+                    continue // Skip backwards matches
+                }
+
                 val lev = similarity(spoken, ct)
-                
+
                 // Substring bonus only if substantial overlap (>50% of shorter string)
+                // AND characters appear in forward order (no backwards matching)
                 val minLen = min(spoken.length, ct.length)
-                val sub = if ((ct.contains(spoken) || spoken.contains(ct)) && 
-                             (spoken.length >= minLen * 0.5 || ct.length >= minLen * 0.5)) {
+                val hasSubstring = ct.contains(spoken) || spoken.contains(ct)
+                val sub = if (hasSubstring &&
+                    (spoken.length >= minLen * 0.5 || ct.length >= minLen * 0.5) &&
+                    isForwardMatch(spoken, ct)) {
                     0.15
                 } else {
                     0.0
                 }
-                
+                // For single-token contacts, also try full concatenation
+                if (contactTokens.size == 1) {
+                    val fullSpokenConcat = originalTokens.joinToString("")
+                    val singleTokenScore = similarity(fullSpokenConcat, contactTokens[0])
+                    if (singleTokenScore > bestTokenScore) {
+                        bestTokenScore = singleTokenScore
+                        bestTokenMatch = "'$fullSpokenConcat'~'${contactTokens[0]}'=${"%.3f".format(singleTokenScore)}"
+                    }
+                }
                 val score = min(lev + sub, 1.0) // Cap at 1.0
-                if (score > bestTokenScore) {
-                    bestTokenScore = score
-                    bestTokenMatch = "'$spoken'~'$ct'=${"%.3f".format(score)}"
+                if (score > bestScoreForThisToken) {
+                    bestScoreForThisToken = score
+                    bestMatchForThisToken = "'$spoken'~'$ct'=${"%.3f".format(score)}"
+                    bestContactIdx = ctIdx
+                }
+            }
+
+            // Update best overall match
+            if (bestScoreForThisToken > bestTokenScore) {
+                bestTokenScore = bestScoreForThisToken
+                bestTokenMatch = bestMatchForThisToken
+                if (bestContactIdx >= 0) {
+                    matchedContactIndices.add(bestContactIdx)
                 }
             }
         }
+
         breakdown.add("Tok:$bestTokenMatch")
         totalScore += bestTokenScore * 0.6
-        
+
         // 2. Full string comparison (30% weight)
         val fullSpoken = originalTokens.joinToString("")
         val fullContact = contactTokens.joinToString("")
-        
+
         val fullScore = similarity(fullSpoken, fullContact)
         breakdown.add("Full:'$fullSpoken'~'$fullContact'=${"%.3f".format(fullScore)}")
         totalScore += fullScore * 0.3
-        
+
         // 3. Prefix bonus (10% weight)
         val firstToken = originalTokens.firstOrNull() ?: ""
         if (fullContact.startsWith(firstToken) && firstToken.isNotEmpty()) {
             breakdown.add("Pre:+0.1")
             totalScore += 0.1
         }
-        
+
         return totalScore to breakdown.joinToString("|")
     }
-    
+
+    /**
+     * Check if characters in 'a' appear in the same forward order in 'b'
+     * Prevents backwards matching like "σαρδαμ" matching "μαρ" from "μαρια"
+     */
+    private fun isForwardMatch(a: String, b: String): Boolean {
+        val (shorter, longer) = if (a.length <= b.length) Pair(a, b) else Pair(b, a)
+
+        var longerIdx = 0
+        for (ch in shorter) {
+            // Find this character in the remaining part of longer string
+            val found = longer.indexOf(ch, longerIdx)
+            if (found == -1) return false
+            longerIdx = found + 1
+        }
+        return true
+    }
     // --- SIMILARITY FUNCTIONS ---
     
     /**
@@ -408,12 +469,13 @@ object SuperFuzzyContactMatcher {
      * Phonetic simplification for Greek
      */
     private fun phoneticSimplify(s: String): String = s
+        .replace("γγ", "γκ")
         .replace("ω", "ο")
         .replace("η", "ι")
         .replace("υ", "ι")
-        .replace("ei", "ι")
+        .replace("ει", "ι")
         .replace("οι", "ι")
-    
+        .replace("αι", "ε")
     /**
      * Calculate Levenshtein similarity (1.0 = identical, 0.0 = completely different)
      */
