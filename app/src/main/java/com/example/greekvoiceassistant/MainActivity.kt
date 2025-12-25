@@ -16,6 +16,7 @@ import android.view.MenuItem
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.example.greekvoiceassistant.databinding.ActivityMainBinding
+import android.content.IntentFilter
 
 class MainActivity : AppCompatActivity() {
 
@@ -75,6 +76,11 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
+
+        // Register unlock receiver dynamically (must be outside the if block!)
+        val unlockReceiver = UnlockReceiver()
+        val filter = IntentFilter(Intent.ACTION_USER_PRESENT)
+        registerReceiver(unlockReceiver, filter)
     }
 
     private fun requestPermissionsIfNeeded() {
@@ -101,8 +107,28 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
+    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+        val prefs = getSharedPreferences("ava_settings", MODE_PRIVATE)
+        val enabled = prefs.getBoolean("start_on_unlock", false)
+        val item = menu.findItem(R.id.action_toggle_unlock)
+        item.title = if (enabled) "Start on unlock: ON" else "Start on unlock: OFF"
+        item.isChecked = enabled
+        return super.onPrepareOptionsMenu(menu)
+    }
+
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
+            R.id.action_toggle_unlock -> {
+                val prefs = getSharedPreferences("ava_settings", MODE_PRIVATE)
+                val currentlyEnabled = prefs.getBoolean("start_on_unlock", false)
+                val newValue = !currentlyEnabled
+                prefs.edit().putBoolean("start_on_unlock", newValue).apply()
+                invalidateOptionsMenu()
+                Snackbar.make(binding.root,
+                    if (newValue) "AVA will start on unlock" else "Unlock start disabled",
+                    Snackbar.LENGTH_SHORT).show()
+                true
+            }
             R.id.action_settings -> true
             else -> super.onOptionsItemSelected(item)
         }
