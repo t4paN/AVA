@@ -1,4 +1,4 @@
-package com.example.greekvoiceassistant
+package com.t4paN.AVA
 
 import android.content.Context
 import android.util.Log
@@ -250,7 +250,7 @@ object AudioDiagnostics {
  * 
  * Then use `adb pull` to retrieve WAV files:
  * ```bash
- * adb shell run-as com.example.greekvoiceassistant ls files/
- * adb shell run-as com.example.greekvoiceassistant cat files/recording_*.wav > recording.wav
+ * adb shell run-as com.t4paN.AVA ls files/
+ * adb shell run-as com.t4paN.AVA cat files/recording_*.wav > recording.wav
  * ```
  */

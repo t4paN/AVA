@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.greekvoiceassistant"
+    namespace = "com.t4paN.AVA"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.greekvoiceassistant"
+        applicationId = "com.t4paN.AVA"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

@@ -1,6 +1,6 @@
 // CallManagerService.kt
 
-package com.example.greekvoiceassistant
+package com.t4paN.AVA
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -22,7 +22,6 @@ import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.telecom.TelecomManager
-import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import android.util.Log
 import android.util.TypedValue

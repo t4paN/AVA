@@ -1,5 +1,5 @@
 //MainActivity.kt
-package com.example.greekvoiceassistant
+package com.t4paN.AVA
 
 import android.Manifest
 import android.content.Intent
@@ -15,7 +15,7 @@ import android.view.Menu
 import android.view.MenuItem
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import com.example.greekvoiceassistant.databinding.ActivityMainBinding
+import com.t4paN.AVA.databinding.ActivityMainBinding
 import android.content.IntentFilter
 
 class MainActivity : AppCompatActivity() {

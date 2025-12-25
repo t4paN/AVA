@@ -1,4 +1,4 @@
-package com.example.greekvoiceassistant
+package com.t4paN.AVA
 
 import android.util.Log
 import kotlin.math.max

@@ -1,11 +1,11 @@
-package com.example.greekvoiceassistant
+package com.t4paN.AVA
 
 import android.os.Bundle
 import androidx.fragment.app.Fragment
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import com.example.greekvoiceassistant.databinding.FragmentFirstBinding
+import com.t4paN.AVA.databinding.FragmentFirstBinding
 
 /**
  * Fragment that displays transcription logs from AVA

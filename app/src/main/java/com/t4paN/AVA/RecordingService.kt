@@ -1,6 +1,6 @@
 //RecordingService.kt
 
-package com.example.greekvoiceassistant
+package com.t4paN.AVA
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -29,9 +29,6 @@ import com.greekvoiceassistant.whisper.engine.WhisperEngine
 import com.greekvoiceassistant.whisper.engine.WhisperEngineJava
 import java.io.File
 import java.io.FileOutputStream
-import com.example.greekvoiceassistant.Contact
-import com.example.greekvoiceassistant.ContactRepository
-import com.example.greekvoiceassistant.SuperFuzzyContactMatcher
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale

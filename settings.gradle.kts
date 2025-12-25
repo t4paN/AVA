@@ -20,6 +20,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Greek Voice Assistant"
+rootProject.name = "Aggelos Voice Assistant"
 include(":app")
 include(":whisper_native")
