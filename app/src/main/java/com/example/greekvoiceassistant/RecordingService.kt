@@ -12,26 +12,29 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioFormat
 import android.media.AudioRecord
-import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
-import com.greekvoiceassistant.whisper.engine.WhisperEngineNative
-import com.greekvoiceassistant.whisper.utils.WaveUtil
-import java.io.File
 import com.greekvoiceassistant.whisper.engine.WhisperEngine
 import com.greekvoiceassistant.whisper.engine.WhisperEngineJava
+import java.io.File
 import java.io.FileOutputStream
 import com.example.greekvoiceassistant.Contact
 import com.example.greekvoiceassistant.ContactRepository
 import com.example.greekvoiceassistant.SuperFuzzyContactMatcher
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 
 class RecordingService : Service() {
@@ -40,9 +43,15 @@ class RecordingService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var isRecording = false
     private var isProcessing = false
-    private var mediaPlayer: MediaPlayer? = null
     private var recordingThread: Thread? = null
     private var vadPipeline: VadAudioPipeline? = null
+    
+    // TTS for prompt
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    
+    // Vibrator for haptic feedback
+    private var vibrator: Vibrator? = null
 
     // Timeout runnable as a field so we can cancel it specifically
     private val timeoutRunnable = Runnable {
@@ -219,7 +228,61 @@ class RecordingService : Service() {
 
         // Initialize VAD pipeline
         vadPipeline = VadAudioPipeline(this)
-
+        
+        // Initialize vibrator
+        vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vm.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+        
+        // Initialize TTS
+        initTTS()
+    }
+    
+    private fun initTTS() {
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val result = tts?.setLanguage(Locale("el", "GR"))
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    Log.w(TAG, "Greek TTS not available, using default")
+                    tts?.setLanguage(Locale.getDefault())
+                }
+                ttsReady = true
+                Log.d(TAG, "TTS initialized and ready")
+            } else {
+                Log.e(TAG, "TTS initialization failed")
+                ttsReady = false
+            }
+        }
+        
+        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {
+                Log.d(TAG, "TTS started: $utteranceId")
+            }
+            
+            override fun onDone(utteranceId: String?) {
+                Log.d(TAG, "TTS done: $utteranceId")
+                if (utteranceId == "prompt") {
+                    // TTS finished, now vibrate and start recording
+                    handler.post {
+                        vibrateAndStartRecording()
+                    }
+                }
+            }
+            
+            override fun onError(utteranceId: String?) {
+                Log.e(TAG, "TTS error: $utteranceId")
+                if (utteranceId == "prompt") {
+                    // Even if TTS fails, proceed with recording
+                    handler.post {
+                        vibrateAndStartRecording()
+                    }
+                }
+            }
+        })
     }
 
     private fun startSilentNotification() {
@@ -246,42 +309,48 @@ class RecordingService : Service() {
     }
 
     private fun playPrompt() {
-        try {
-            Log.d(TAG, "Playing prompt...")
-            mediaPlayer = MediaPlayer.create(this, R.raw.prompt)
-
-            mediaPlayer?.setOnCompletionListener {
-                Log.d(TAG, "Prompt finished")
-                try {
-                    it.stop()
-                    it.release()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error releasing MediaPlayer", e)
+        Log.d(TAG, "Playing TTS prompt...")
+        
+        initializeWhisperIfNeeded()
+        
+        if (ttsReady && tts != null) {
+            tts?.speak("Πείτε όνομα", TextToSpeech.QUEUE_FLUSH, null, "prompt")
+        } else {
+            // TTS not ready, wait a bit and try again or skip
+            Log.w(TAG, "TTS not ready, waiting 200ms...")
+            handler.postDelayed({
+                if (ttsReady && tts != null) {
+                    tts?.speak("Πείτε όνομα", TextToSpeech.QUEUE_FLUSH, null, "prompt")
+                } else {
+                    Log.w(TAG, "TTS still not ready, skipping prompt")
+                    vibrateAndStartRecording()
                 }
-                mediaPlayer = null
-
-                handler.postDelayed({
-                    initializeWhisperIfNeeded()
-                    prepareRecorder()
-                }, 100)
-            }
-
-            mediaPlayer?.setOnErrorListener { mp, what, extra ->
-                Log.e(TAG, "MediaPlayer error: what=$what, extra=$extra")
-                mp.release()
-                mediaPlayer = null
-                initializeWhisperIfNeeded()
-                prepareRecorder()
-                true
-            }
-
-            mediaPlayer?.start()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error playing prompt", e)
-            initializeWhisperIfNeeded()
-            prepareRecorder()
+            }, 100)
         }
+    }
+    
+    /**
+     * Vibrate for 100ms then immediately start recording
+     */
+    private fun vibrateAndStartRecording() {
+        Log.d(TAG, "Vibrating before recording...")
+        
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(200)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Vibration error", e)
+        }
+        
+        // Start recording immediately after vibration starts
+        // The 100ms vibration will finish while recording begins
+        handler.postDelayed({
+            prepareRecorder()
+        }, 100)
     }
 
     /**
@@ -328,6 +397,16 @@ class RecordingService : Service() {
     private fun prepareRecorder() {
         if (isRecording) return
 
+// Check permission
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.RECORD_AUDIO
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            Log.e(TAG, "RECORD_AUDIO permission not granted")
+            safeToast("Microphone permission required")
+            return
+        }
+
         try {
             Log.d(TAG, "Preparing AudioRecord...")
             isRecording = true
@@ -355,9 +434,6 @@ class RecordingService : Service() {
 
             audioRecord?.startRecording()
             Log.d(TAG, "Recording started!")
-
-            // No start beep anymore - just a log
-            Log.d(TAG, "Start beep removed - recording immediately")
 
             safeToast("Recording...")
 
@@ -405,9 +481,6 @@ class RecordingService : Service() {
                         val durationMs = (totalSamplesRead * 1000) / SAMPLE_RATE
                         Log.d(TAG, "VAD detected end of speech at ${durationMs}ms")
                         speechEndDetected = true
-
-                        // DON'T stop recording here or modify isRecording flag
-                        // Let the loop finish naturally for clean AudioRecord state
                     }
                 } else if (shortsRead < 0) {
                     Log.e(TAG, "AudioRecord read error: $shortsRead")
@@ -423,7 +496,7 @@ class RecordingService : Service() {
 
             // Signal that recording is done
             handler.post {
-                if (isRecording) {  // Only if we haven't already been stopped by timeout
+                if (isRecording) {
                     stopRecordingImmediately()
                 }
             }
@@ -440,7 +513,6 @@ class RecordingService : Service() {
 
     /**
      * Stop recording immediately and go straight to transcription.
-     * NO BEEP - saves ~800ms per recording.
      */
     private fun stopRecordingImmediately() {
         if (!isRecording) {
@@ -455,14 +527,13 @@ class RecordingService : Service() {
             // Cancel ONLY the 4-second timeout
             handler.removeCallbacks(timeoutRunnable)
 
-            // Wait for recording thread to finish cleanly (give it up to 1 second)
+            // Wait for recording thread to finish cleanly
             recordingThread?.join(1000)
 
             if (recordingThread?.isAlive == true) {
                 Log.w(TAG, "Recording thread still alive after 1 second timeout")
             }
 
-            // Now safely stop AudioRecord
             try {
                 audioRecord?.stop()
                 Log.d(TAG, "AudioRecord stopped")
@@ -479,15 +550,13 @@ class RecordingService : Service() {
 
             audioRecord = null
 
-            // NO BEEP - go straight to transcription
-            Log.d(TAG, "Skipping stop beep, going directly to transcription")
+            Log.d(TAG, "Going directly to transcription")
             if (!isProcessing) {
                 transcribeAudio()
             }
 
         } catch (e: Exception) {
             Log.e(TAG, "Stop recording error", e)
-            // Still try to transcribe even if stop failed
             if (!isProcessing) {
                 handler.postDelayed({ transcribeAudio() }, 100)
             }
@@ -564,7 +633,6 @@ class RecordingService : Service() {
                 }
             } finally {
                 isProcessing = false
-                // DON'T call stopSelf() - keep service alive for next recording
                 Log.d(TAG, "Transcription complete, service staying alive for next recording")
             }
         }.start()
@@ -572,8 +640,6 @@ class RecordingService : Service() {
 
     /**
      * Handle transcription with intent detection and routing
-     *
-     * NEW: Detects CALL, FLASHLIGHT, and RADIO intents before processing
      */
     private fun handleTranscriptionComplete(transcriptionText: String, transcriptionTime: Long) {
         Log.i(TAG, "=== Processing Transcription ===")
@@ -609,7 +675,6 @@ class RecordingService : Service() {
                 }
 
                 // TODO: Implement flashlight toggle
-                // toggleFlashlight()
             }
 
             SuperFuzzyContactMatcher.Intent.RADIO -> {
@@ -630,7 +695,6 @@ class RecordingService : Service() {
                 }
 
                 // TODO: Implement radio playback
-                // playRadio()
             }
 
             null -> {
@@ -649,6 +713,7 @@ class RecordingService : Service() {
 
                 handler.post {
                     safeToast("No command detected")
+                    tts?.speak("Δεν αναγνωρίστηκε εντολή", TextToSpeech.QUEUE_FLUSH, null, "no_intent")
                 }
             }
         }
@@ -688,7 +753,7 @@ class RecordingService : Service() {
                 action = CallManagerService.ACTION_SINGLE_MATCH
                 putExtra(CallManagerService.EXTRA_CONTACT_NAME, matchResult.contact.displayName)
                 putExtra(CallManagerService.EXTRA_PHONE_NUMBER, matchResult.contact.phoneNumber)
-                putExtra(CallManagerService.EXTRA_ROUTING, "") // TODO: Add lastName routing later
+                putExtra(CallManagerService.EXTRA_ROUTING, "")
             }
             try {
                 startForegroundService(callIntent)
@@ -734,7 +799,7 @@ class RecordingService : Service() {
                     )
                     putStringArrayListExtra(
                         CallManagerService.EXTRA_ROUTINGS,
-                        ArrayList(ambiguousCandidates.map { "" }) // TODO: Add lastName routing later
+                        ArrayList(ambiguousCandidates.map { "" })
                     )
                 }
                 try {
@@ -761,13 +826,9 @@ class RecordingService : Service() {
                     safeToast("No contact match found")
                 }
 
-                // Speak "not found" in Greek
-                var notFoundTts: android.speech.tts.TextToSpeech? = null
-                notFoundTts = android.speech.tts.TextToSpeech(this) { status ->
-                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-                        notFoundTts?.language = java.util.Locale("el", "GR")
-                        notFoundTts?.speak("Δεν βρέθηκε επαφή", android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "not_found")
-                    }
+                // Speak "not found" in Greek using existing TTS
+                handler.post {
+                    tts?.speak("Δεν βρέθηκε επαφή", TextToSpeech.QUEUE_FLUSH, null, "not_found")
                 }
             }
         }
@@ -794,35 +855,28 @@ class RecordingService : Service() {
 
     /**
      * Nuclear option: kill the entire process.
-     * All native resources (Whisper, NNAPI, AudioRecord) die with the process.
      */
     private fun nukeAppProcess() {
         try {
-            // Stop foreground notification
             stopForeground(STOP_FOREGROUND_REMOVE)
-
-            // Stop service
             stopSelf()
 
-            // Relaunch app with cleared task
             val relaunchIntent = Intent(this, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             }
             startActivity(relaunchIntent)
 
-            // Kill process - this releases ALL native memory
             android.os.Process.killProcess(android.os.Process.myPid())
             kotlin.system.exitProcess(0)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error during nuke", e)
-            // Force kill anyway
             android.os.Process.killProcess(android.os.Process.myPid())
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // NUKE handler - must be first, before any other logic
+        // NUKE handler - must be first
         if (intent?.action == ACTION_NUKE_APP) {
             Log.w(TAG, "☢️ NUKE_APP received - killing process")
             nukeAppProcess()
@@ -841,7 +895,7 @@ class RecordingService : Service() {
             return START_STICKY
         }
 
-        // Start a new recording (whether first time or subsequent)
+        // Start a new recording session
         Log.d(TAG, "Starting new recording session")
         handler.postDelayed({
             playPrompt()
@@ -853,14 +907,12 @@ class RecordingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
 
-        // Unregister broadcast receiver
         try {
             unregisterReceiver(refreshReceiver)
         } catch (e: Exception) {
             Log.e(TAG, "Error unregistering receiver", e)
         }
 
-        // Clean up handler callbacks
         handler.removeCallbacks(timeoutRunnable)
         handler.removeCallbacksAndMessages(null)
 
@@ -874,9 +926,10 @@ class RecordingService : Service() {
         }
 
         try {
-            mediaPlayer?.release()
+            tts?.stop()
+            tts?.shutdown()
         } catch (e: Exception) {
-            Log.e(TAG, "Error cleaning up MediaPlayer", e)
+            Log.e(TAG, "Error cleaning up TTS", e)
         }
 
         try {
@@ -886,10 +939,8 @@ class RecordingService : Service() {
         }
 
         audioRecord = null
-        mediaPlayer = null
+        tts = null
         vadPipeline = null
-
-        // DON'T null out sharedWhisperEngine - it persists for next service instance
 
         Log.d(TAG, "RecordingService destroyed (WhisperEngine kept alive)")
     }

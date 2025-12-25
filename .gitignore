@@ -42,3 +42,4 @@ caches/
 daemon/
 kotlin-profile/
 native/
+*.zip

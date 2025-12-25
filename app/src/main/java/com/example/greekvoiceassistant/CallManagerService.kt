@@ -231,12 +231,13 @@ class CallManagerService : Service() {
         pendingNumber = number
         pendingRouting = routing
 
-        showCancelOverlay(name)
-
         currentPhase = CallPhase.ANNOUNCING
         handler.postDelayed({
             announceCall(name)
-        }, 300)
+            handler.postDelayed({
+                showCancelOverlay(name)
+            }, 300)
+        }, 400)
     }
 
     private fun announceCall(name: String) {
@@ -253,9 +254,11 @@ class CallManagerService : Service() {
             return
         }
 
+        // Proceed to place call
         currentPhase = CallPhase.CALLING
         placeCall()
     }
+
 
     private fun placeCall() {
         val number = pendingNumber ?: return
@@ -273,7 +276,7 @@ class CallManagerService : Service() {
 
         handler.postDelayed({
             cleanup()
-        }, 500)
+        }, 800)
     }
 
     private fun placeRegularCall(number: String) {
