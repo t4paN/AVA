@@ -220,7 +220,6 @@ class RecordingService : Service() {
         // Initialize VAD pipeline
         vadPipeline = VadAudioPipeline(this)
 
-        playPrompt()
     }
 
     private fun startSilentNotification() {
@@ -237,7 +236,7 @@ class RecordingService : Service() {
         }
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Listening...")
+            .setContentTitle("AVA Standing By")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setSound(null)
@@ -656,7 +655,7 @@ class RecordingService : Service() {
     }
 
     /**
-     * Handle CALL intent - match contact and initiate call
+     * Handle CALL intent - match contact and hand off to CallManagerService
      */
     private fun handleCallIntent(originalTranscript: String, fuzzifiedTranscript: String, transcriptionTime: Long) {
         val matchResult = SuperFuzzyContactMatcher.findBestMatch(
@@ -684,8 +683,19 @@ class RecordingService : Service() {
                 safeToast("Match: ${matchResult.contact.displayName} (${String.format("%.2f", matchResult.confidence)})")
             }
 
-            // TODO: Initiate phone call
-            // initiateCall(matchResult.contact.phoneNumber)
+            // Hand off to CallManagerService for SINGLE_MATCH
+            val callIntent = Intent(this, CallManagerService::class.java).apply {
+                action = CallManagerService.ACTION_SINGLE_MATCH
+                putExtra(CallManagerService.EXTRA_CONTACT_NAME, matchResult.contact.displayName)
+                putExtra(CallManagerService.EXTRA_PHONE_NUMBER, matchResult.contact.phoneNumber)
+                putExtra(CallManagerService.EXTRA_ROUTING, "") // TODO: Add lastName routing later
+            }
+            try {
+                startForegroundService(callIntent)
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Permission denied starting CallManagerService", e)
+                handler.post { safeToast("Permission error starting call") }
+            }
 
         } else {
             // Check if ambiguous or no match
@@ -711,6 +721,29 @@ class RecordingService : Service() {
                     safeToast("Ambiguous: ${ambiguousCandidates[0].contact.displayName} vs ${ambiguousCandidates[1].contact.displayName}")
                 }
 
+                // Hand off to CallManagerService for AMBIGUOUS_MATCH
+                val callIntent = Intent(this, CallManagerService::class.java).apply {
+                    action = CallManagerService.ACTION_AMBIGUOUS_MATCH
+                    putStringArrayListExtra(
+                        CallManagerService.EXTRA_NAMES,
+                        ArrayList(ambiguousCandidates.map { it.contact.displayName })
+                    )
+                    putStringArrayListExtra(
+                        CallManagerService.EXTRA_NUMBERS,
+                        ArrayList(ambiguousCandidates.map { it.contact.phoneNumber })
+                    )
+                    putStringArrayListExtra(
+                        CallManagerService.EXTRA_ROUTINGS,
+                        ArrayList(ambiguousCandidates.map { "" }) // TODO: Add lastName routing later
+                    )
+                }
+                try {
+                    startForegroundService(callIntent)
+                } catch (e: SecurityException) {
+                    Log.e(TAG, "Permission denied starting CallManagerService", e)
+                    handler.post { safeToast("Permission error starting call") }
+                }
+
             } else {
                 Log.w(TAG, "✗ NO MATCH found")
 
@@ -727,14 +760,21 @@ class RecordingService : Service() {
                 handler.post {
                     safeToast("No contact match found")
                 }
-            }
 
-            // TODO: Play "contact not found" TTS message
-            // playContactNotFoundMessage()
+                // Speak "not found" in Greek
+                var notFoundTts: android.speech.tts.TextToSpeech? = null
+                notFoundTts = android.speech.tts.TextToSpeech(this) { status ->
+                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                        notFoundTts?.language = java.util.Locale("el", "GR")
+                        notFoundTts?.speak("Δεν βρέθηκε επαφή", android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "not_found")
+                    }
+                }
+            }
         }
 
         SuperFuzzyContactMatcher.clearAmbiguousCandidates()
     }
+
 
     private fun addLogEntry(log: TranscriptionLog) {
         transcriptionLogs.add(log)

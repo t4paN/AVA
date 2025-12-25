@@ -9,9 +9,13 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Optional but recommended so CALL_PHONE doesn’t trigger a hardware warning -->
+    <!-- Optional but recommended so CALL_PHONE doesn't trigger a hardware warning -->
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <application
@@ -57,11 +61,21 @@
             android:name=".SpeakService"
             android:exported="false" />
 
-        <!-- New foreground service for microphone recording -->
+        <!-- Recording service for microphone -->
         <service
             android:name=".RecordingService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Call manager service for phone calls and overlay -->
+        <service
+            android:name=".CallManagerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="accessibility_call_assistant" />
+        </service>
 
     </application>
 </manifest>
