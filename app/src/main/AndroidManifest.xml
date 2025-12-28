@@ -86,4 +86,18 @@
         </service>
 
     </application>
+
+    <queries>
+        <package android:name="com.viber.voip" />
+        <package android:name="com.whatsapp" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="viber" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="whatsapp" />
+        </intent>
+    </queries>
+
 </manifest>

@@ -14,6 +14,7 @@ data class Contact(
     val displayName: String,
     val phoneNumber: String,
     val normalizedName: String,
+    val routing: String = "",
     val phoneticVariants: List<String> = emptyList()
 )
 

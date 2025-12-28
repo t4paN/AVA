@@ -32,7 +32,8 @@ import java.io.FileOutputStream
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
-
+import android.media.AudioManager
+import android.media.ToneGenerator
 
 class RecordingService : Service() {
 
@@ -325,29 +326,40 @@ class RecordingService : Service() {
             }, 100)
         }
     }
-    
+
     /**
-     * Vibrate for 100ms then immediately start recording
+     * Play beep, vibrate, then start recording
      */
     private fun vibrateAndStartRecording() {
-        Log.d(TAG, "Vibrating before recording...")
-        
+        Log.d(TAG, "Beep + vibrate before recording...")
+
+        // Play beep
+        try {
+            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+            handler.postDelayed({
+                toneGen.release()
+            }, 200)
+        } catch (e: Exception) {
+            Log.e(TAG, "Beep error", e)
+        }
+
+        // Vibrate
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
                 @Suppress("DEPRECATION")
-                vibrator?.vibrate(200)
+                vibrator?.vibrate(100)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Vibration error", e)
         }
-        
-        // Start recording immediately after vibration starts
-        // The 100ms vibration will finish while recording begins
+
+        // Start recording after beep finishes
         handler.postDelayed({
             prepareRecorder()
-        }, 100)
+        }, 200)
     }
 
     /**
@@ -750,7 +762,7 @@ class RecordingService : Service() {
                 action = CallManagerService.ACTION_SINGLE_MATCH
                 putExtra(CallManagerService.EXTRA_CONTACT_NAME, matchResult.contact.displayName)
                 putExtra(CallManagerService.EXTRA_PHONE_NUMBER, matchResult.contact.phoneNumber)
-                putExtra(CallManagerService.EXTRA_ROUTING, "")
+                putExtra(CallManagerService.EXTRA_ROUTING, matchResult.contact.routing)
             }
             try {
                 startForegroundService(callIntent)
@@ -796,7 +808,7 @@ class RecordingService : Service() {
                     )
                     putStringArrayListExtra(
                         CallManagerService.EXTRA_ROUTINGS,
-                        ArrayList(ambiguousCandidates.map { "" })
+                        ArrayList(ambiguousCandidates.map { it.contact.routing })
                     )
                 }
                 try {

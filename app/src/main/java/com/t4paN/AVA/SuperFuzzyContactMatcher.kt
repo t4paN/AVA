@@ -351,7 +351,7 @@ object SuperFuzzyContactMatcher {
         mergedTokens: List<String>,
         contact: Contact
     ): Pair<Double, String> {
-        val normalizedContact = normalizeGreek(contact.displayName)
+        val normalizedContact = contact.normalizedName
         val contactTokens = normalizedContact.split(" ").filter { it.isNotEmpty() }
 
         var totalScore = 0.0

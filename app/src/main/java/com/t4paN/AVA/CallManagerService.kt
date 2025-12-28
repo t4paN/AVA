@@ -11,6 +11,8 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -34,6 +36,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.widget.TextViewCompat
 import java.util.Locale
 
 /**
@@ -61,14 +64,15 @@ class CallManagerService : Service() {
 
         // Timing
         private const val POST_TTS_BUFFER_MS = 500L
-        
+
+        // TTS Speech rates
+        private const val TTS_RATE_NORMAL = 1.0f
+        private const val TTS_RATE_SLOW = 0.75f
+
         // Colors
         private const val COLOR_RED = 0xFFCC0000.toInt()
         private const val COLOR_ORANGE = 0xFFFF8C00.toInt()
         private const val COLOR_BLUE = 0xFF4169E1.toInt()
-        
-        // Max characters before truncation
-        private const val MAX_NAME_LENGTH = 12
     }
 
     // State
@@ -221,6 +225,23 @@ class CallManagerService : Service() {
         })
     }
 
+    // ==================== AUDIO FEEDBACK ====================
+
+    /**
+     * Play a short beep using system tones
+     */
+    private fun playBeep() {
+        try {
+            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+            handler.postDelayed({
+                toneGen.release()
+            }, 200)
+        } catch (e: Exception) {
+            Log.e(TAG, "Beep error", e)
+        }
+    }
+
     // ==================== SINGLE MATCH FLOW ====================
 
     private fun handleSingleMatch(name: String, number: String, routing: String) {
@@ -232,6 +253,7 @@ class CallManagerService : Service() {
 
         currentPhase = CallPhase.ANNOUNCING
         handler.postDelayed({
+            playBeep()
             announceCall(name)
             handler.postDelayed({
                 showCancelOverlay(name)
@@ -240,8 +262,11 @@ class CallManagerService : Service() {
     }
 
     private fun announceCall(name: String) {
-        val text = "Καλώ $name"
+        // Strip routing suffix from TTS announcement
+        val cleanName = stripRoutingSuffix(name)
+        val text = "Καλώ $cleanName"
         Log.d(TAG, "Announcing: $text")
+        tts?.setSpeechRate(TTS_RATE_NORMAL)
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "call_announcement")
     }
 
@@ -306,12 +331,15 @@ class CallManagerService : Service() {
         Log.d(TAG, "Placing Viber call to $number")
 
         try {
-            val uri = Uri.parse("viber://call?number=${sanitizeNumber(number)}")
+            // Opens chat window, user taps "Free Call" button
+            val uri = Uri.parse("viber://chat?number=${sanitizeNumber(number)}")
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                setPackage("com.viber.voip")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
 
-            if (intent.resolveActivity(packageManager) != null) {
+            // Check if Viber is installed
+            if (packageManager.getLaunchIntentForPackage("com.viber.voip") != null) {
                 startActivity(intent)
             } else {
                 Log.w(TAG, "Viber not installed, falling back to regular call")
@@ -335,7 +363,7 @@ class CallManagerService : Service() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
 
-            if (intent.resolveActivity(packageManager) != null) {
+            if (packageManager.getLaunchIntentForPackage("com.whatsapp") != null) {
                 startActivity(intent)
             } else {
                 Log.w(TAG, "WhatsApp not installed, falling back to regular call")
@@ -359,16 +387,21 @@ class CallManagerService : Service() {
 
         currentPhase = CallPhase.SELECTION
 
-        // Show selection overlay with two boxes
+        playBeep()
+
+        // Show selection overlay with boxes above, cancel below
         showSelectionOverlay(
             names.getOrNull(0) ?: "?",
             names.getOrNull(1) ?: "?"
         )
 
-        // Announce options
+        // Announce options with slower speech
         handler.postDelayed({
-            val prompt = "Επιλογή: ${names.getOrNull(0)} ή ${names.getOrNull(1)}"
+            val name1 = stripRoutingSuffix(names.getOrNull(0) ?: "?")
+            val name2 = stripRoutingSuffix(names.getOrNull(1) ?: "?")
+            val prompt = "Επιλογή: $name1 ή $name2"
             Log.d(TAG, "Announcing: $prompt")
+            tts?.setSpeechRate(TTS_RATE_SLOW)
             tts?.speak(prompt, TextToSpeech.QUEUE_FLUSH, null, "selection_prompt")
         }, 300)
     }
@@ -398,11 +431,12 @@ class CallManagerService : Service() {
         // Announce and proceed to call
         currentPhase = CallPhase.ANNOUNCING
         handler.postDelayed({
+            tts?.setSpeechRate(TTS_RATE_NORMAL)
             announceCall(pendingName!!)
         }, 300)
     }
 
-    // ==================== SELECTION OVERLAY (Orange/Blue boxes) ====================
+    // ==================== SELECTION OVERLAY (Orange/Blue boxes above, Cancel below) ====================
 
     private fun showSelectionOverlay(name1: String, name2: String) {
         if (selectionOverlay != null) {
@@ -415,22 +449,51 @@ class CallManagerService : Service() {
         val displayMetrics = resources.displayMetrics
         val screenHeight = displayMetrics.heightPixels
         val screenWidth = displayMetrics.widthPixels
+        val density = displayMetrics.density
 
-        val marginDp = 24
-        val marginPx = (marginDp * displayMetrics.density).toInt()
-        val gapPx = (10 * displayMetrics.density).toInt() // Gap between boxes
+        // Smaller side margins, bigger gap between boxes
+        val sideMarginPx = (12 * density).toInt()
+        val boxGapPx = (20 * density).toInt()
+        val bottomMarginPx = (24 * density).toInt()
 
-        val overlayWidth = screenWidth - (marginPx * 2)
-        val overlayHeight = (screenHeight / 2) - marginPx
-        val boxWidth = ((overlayWidth - gapPx) * 0.45).toInt()
+        // Heights
+        val cancelHeight = (screenHeight * 0.40).toInt()
+        val selectionHeight = (screenHeight * 0.45).toInt()
+        val gapBetweenSections = (16 * density).toInt()l
 
-        // Container
-        val container = LinearLayout(this).apply {
+        val totalWidth = screenWidth - (sideMarginPx * 2)
+        val boxWidth = (totalWidth - boxGapPx) / 2
+
+        // === CANCEL BUTTON (bottom) ===
+        val cancelButton = FrameLayout(this).apply {
+            setBackgroundColor(COLOR_RED)
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    handleCancelTap()
+                }
+                true
+            }
+        }
+
+        val cancelText = TextView(this).apply {
+            text = "ΑΚΥΡΟ"
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 48f)
+        }
+        cancelButton.addView(cancelText, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        // === SELECTION CONTAINER (above cancel) ===
+        val selectionContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
 
-        // Left box (Orange) - First contact
+        // Left box (Orange)
         val leftBox = FrameLayout(this).apply {
             setBackgroundColor(COLOR_ORANGE)
             setOnTouchListener { _, event ->
@@ -442,18 +505,21 @@ class CallManagerService : Service() {
         }
 
         val leftText = TextView(this).apply {
-            text = truncateName(name1)
+            text = formatNameForButton(name1)
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
+            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
         }
+        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+            leftText, 16, 48, 2, TypedValue.COMPLEX_UNIT_SP
+        )
         leftBox.addView(leftText, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // Right box (Blue) - Second contact
+        // Right box (Blue)
         val rightBox = FrameLayout(this).apply {
             setBackgroundColor(COLOR_BLUE)
             setOnTouchListener { _, event ->
@@ -465,38 +531,55 @@ class CallManagerService : Service() {
         }
 
         val rightText = TextView(this).apply {
-            text = truncateName(name2)
+            text = formatNameForButton(name2)
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
+            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
         }
+        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+            rightText, 16, 48, 2, TypedValue.COMPLEX_UNIT_SP
+        )
         rightBox.addView(rightText, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // Add boxes to container
+        // Add boxes to selection container
         val leftParams = LinearLayout.LayoutParams(boxWidth, LinearLayout.LayoutParams.MATCH_PARENT)
-        leftParams.marginEnd = gapPx / 2
-        container.addView(leftBox, leftParams)
+        leftParams.marginEnd = boxGapPx / 2
+        selectionContainer.addView(leftBox, leftParams)
 
         val rightParams = LinearLayout.LayoutParams(boxWidth, LinearLayout.LayoutParams.MATCH_PARENT)
-        rightParams.marginStart = gapPx / 2
-        container.addView(rightBox, rightParams)
+        rightParams.marginStart = boxGapPx / 2
+        selectionContainer.addView(rightBox, rightParams)
 
-        selectionOverlay = container
+        // === MAIN CONTAINER ===
+        val mainContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        }
+
+        val selectionParams = LinearLayout.LayoutParams(totalWidth, selectionHeight)
+        selectionParams.bottomMargin = gapBetweenSections
+        mainContainer.addView(selectionContainer, selectionParams)
+
+        val cancelParams = LinearLayout.LayoutParams(totalWidth, cancelHeight)
+        mainContainer.addView(cancelButton, cancelParams)
+
+        selectionOverlay = mainContainer
 
         val params = WindowManager.LayoutParams(
-            overlayWidth,
-            overlayHeight,
+            screenWidth,
+            selectionHeight + cancelHeight + gapBetweenSections + bottomMarginPx,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = marginPx
+            y = bottomMarginPx
+            x = 0
         }
 
         try {
@@ -529,6 +612,13 @@ class CallManagerService : Service() {
 
         Log.d(TAG, "Showing cancel overlay for: $contactName")
 
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val screenWidth = displayMetrics.widthPixels
+        val density = displayMetrics.density
+
+        val marginPx = (24 * density).toInt()
+
         val container = FrameLayout(this).apply {
             setBackgroundColor(COLOR_RED)
             setOnTouchListener { _, event ->
@@ -539,27 +629,23 @@ class CallManagerService : Service() {
             }
         }
 
-        // Big ass text with contact name
+        // Big text with contact name - no brackets, words on separate lines
         val nameText = TextView(this).apply {
-            text = "[${contactName.uppercase()}]"
+            text = formatNameForButton(stripRoutingSuffix(contactName))
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 40f)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
+            setPadding((16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt())
         }
+        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+            nameText, 24, 72, 2, TypedValue.COMPLEX_UNIT_SP
+        )
         container.addView(nameText, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
         overlayView = container
-
-        val displayMetrics = resources.displayMetrics
-        val screenHeight = displayMetrics.heightPixels
-        val screenWidth = displayMetrics.widthPixels
-
-        val marginDp = 24
-        val marginPx = (marginDp * displayMetrics.density).toInt()
 
         val params = WindowManager.LayoutParams(
             screenWidth - (marginPx * 2),
@@ -603,6 +689,7 @@ class CallManagerService : Service() {
                 Log.i(TAG, "Aborting call before dial")
                 tts?.stop()
                 currentPhase = CallPhase.IDLE
+                tts?.setSpeechRate(TTS_RATE_NORMAL)
                 tts?.speak("Ακυρώθηκε", TextToSpeech.QUEUE_FLUSH, null, "cancelled")
 
                 handler.postDelayed({
@@ -619,6 +706,7 @@ class CallManagerService : Service() {
                 Log.i(TAG, "Cancelling selection")
                 tts?.stop()
                 currentPhase = CallPhase.IDLE
+                tts?.setSpeechRate(TTS_RATE_NORMAL)
                 tts?.speak("Ακυρώθηκε", TextToSpeech.QUEUE_FLUSH, null, "cancelled")
 
                 handler.postDelayed({
@@ -634,9 +722,25 @@ class CallManagerService : Service() {
 
     // ==================== UTILITIES ====================
 
-    private fun truncateName(name: String): String {
-        return if (name.length > MAX_NAME_LENGTH) {
-            name.take(MAX_NAME_LENGTH - 3) + "..."
+    /**
+     * Format name for button display:
+     * - No brackets
+     * - Each word on new line for max size
+     * - Uppercase for readability
+     */
+    private fun formatNameForButton(name: String): String {
+        return name.uppercase().split(" ").joinToString("\n")
+    }
+
+    /**
+     * Strip routing suffix (VIBER, WHATSAPP, SIGNAL) from display name
+     */
+    private fun stripRoutingSuffix(name: String): String {
+        val suffixes = listOf("viber", "whatsapp", "signal")
+        val parts = name.trim().split("\\s+".toRegex())
+
+        return if (parts.isNotEmpty() && parts.last().lowercase() in suffixes) {
+            parts.dropLast(1).joinToString(" ")
         } else {
             name
         }
@@ -674,6 +778,7 @@ class CallManagerService : Service() {
     }
 
     private fun speakError(message: String) {
+        tts?.setSpeechRate(TTS_RATE_NORMAL)
         tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "error")
     }
 
@@ -693,6 +798,7 @@ class CallManagerService : Service() {
         hideSelectionOverlay()
 
         tts?.stop()
+        tts?.setSpeechRate(TTS_RATE_NORMAL)
 
         handler.removeCallbacksAndMessages(null)
 
