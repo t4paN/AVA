@@ -331,16 +331,34 @@ class CallManagerService : Service() {
         Log.d(TAG, "Placing Viber call to $number")
 
         try {
-            // Opens chat window, user taps "Free Call" button
             val uri = Uri.parse("viber://chat?number=${sanitizeNumber(number)}")
             val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                 setPackage("com.viber.voip")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
 
-            // Check if Viber is installed
             if (packageManager.getLaunchIntentForPackage("com.viber.voip") != null) {
                 startActivity(intent)
+
+                // Show haptic guide after Viber opens
+                handler.postDelayed({
+                    HapticGuideManager.start(
+                        context = this,
+                        packageName = "com.viber.voip",
+                        onTapped = {
+                            Log.i(TAG, "User tapped Viber call button")
+                            handler.postDelayed({
+                                HapticGuideManager.stop()
+                            }, 2000)
+                        },
+
+                        onCancelled = {
+                            Log.i(TAG, "User cancelled Viber guide")
+                            HapticGuideManager.stop()
+                        }
+                    )
+                }, 300)  // Let Viber load first
+
             } else {
                 Log.w(TAG, "Viber not installed, falling back to regular call")
                 speakError("Το Viber δεν είναι εγκατεστημένο")
@@ -351,7 +369,6 @@ class CallManagerService : Service() {
             placeRegularCall(number)
         }
     }
-
     private fun placeWhatsAppCall(number: String) {
         Log.d(TAG, "Placing WhatsApp call to $number")
 
@@ -459,7 +476,7 @@ class CallManagerService : Service() {
         // Heights
         val cancelHeight = (screenHeight * 0.40).toInt()
         val selectionHeight = (screenHeight * 0.45).toInt()
-        val gapBetweenSections = (16 * density).toInt()l
+        val gapBetweenSections = (16 * density).toInt()
 
         val totalWidth = screenWidth - (sideMarginPx * 2)
         val boxWidth = (totalWidth - boxGapPx) / 2
