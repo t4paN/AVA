@@ -73,6 +73,7 @@ class CallManagerService : Service() {
         private const val COLOR_RED = 0xFFCC0000.toInt()
         private const val COLOR_ORANGE = 0xFFFF8C00.toInt()
         private const val COLOR_BLUE = 0xFF4169E1.toInt()
+        private const val COLOR_GREEN = 0xFF00AA00.toInt()
     }
 
     // State
@@ -106,6 +107,13 @@ class CallManagerService : Service() {
 
     // Handler for delays
     private val handler = Handler(Looper.getMainLooper())
+
+    // Auto-call setting
+    private val autoCallEnabled: Boolean
+        get() {
+            val prefs = getSharedPreferences("ava_settings", Context.MODE_PRIVATE)
+            return prefs.getBoolean("auto_call_enabled", true)
+        }
 
     // ==================== LIFECYCLE ====================
 
@@ -256,7 +264,14 @@ class CallManagerService : Service() {
             playBeep()
             announceCall(name)
             handler.postDelayed({
-                showCancelOverlay(name)
+                // Check auto-call setting to decide which overlay to show
+                if (autoCallEnabled) {
+                    // Show red cancel overlay (will auto-call after TTS)
+                    showCancelOverlay(name)
+                } else {
+                    // Show green+red confirmation overlay immediately
+                    showCallConfirmationOverlay()
+                }
             }, 300)
         }, 400)
     }
@@ -271,18 +286,24 @@ class CallManagerService : Service() {
     }
 
     private fun onAnnouncementComplete() {
-        Log.d(TAG, "Announcement complete, phase=$currentPhase")
+        Log.d(TAG, "Announcement complete, phase=$currentPhase, autoCall=$autoCallEnabled")
 
         if (currentPhase != CallPhase.ANNOUNCING) {
             Log.d(TAG, "Call was cancelled during announcement")
             return
         }
 
-        // Proceed to place call
-        currentPhase = CallPhase.CALLING
-        placeCall()
+        // Check auto-call setting
+        if (autoCallEnabled) {
+            Log.d(TAG, "Auto-call enabled, placing call immediately")
+            currentPhase = CallPhase.CALLING
+            placeCall()
+        } else {
+            Log.d(TAG, "Auto-call disabled, confirmation overlay already showing - waiting for user tap")
+            // Green+red overlay is already showing, just wait for user to tap
+            // No need to hide/show anything
+        }
     }
-
 
     private fun placeCall() {
         val number = pendingNumber ?: return
@@ -369,6 +390,7 @@ class CallManagerService : Service() {
             placeRegularCall(number)
         }
     }
+
     private fun placeWhatsAppCall(number: String) {
         Log.d(TAG, "Placing WhatsApp call to $number")
 
@@ -472,6 +494,7 @@ class CallManagerService : Service() {
         val sideMarginPx = (12 * density).toInt()
         val boxGapPx = (20 * density).toInt()
         val bottomMarginPx = (24 * density).toInt()
+        val cornerRadiusPx = (24 * density)
 
         // Heights
         val cancelHeight = (screenHeight * 0.40).toInt()
@@ -483,7 +506,10 @@ class CallManagerService : Service() {
 
         // === CANCEL BUTTON (bottom) ===
         val cancelButton = FrameLayout(this).apply {
-            setBackgroundColor(COLOR_RED)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(COLOR_RED)
+                cornerRadius = cornerRadiusPx
+            }
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_DOWN) {
                     handleCancelTap()
@@ -493,7 +519,7 @@ class CallManagerService : Service() {
         }
 
         val cancelText = TextView(this).apply {
-            text = "ΑΚΥΡΟ"
+            text = "ΑΚΥΡΩΣΗ"
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -512,7 +538,10 @@ class CallManagerService : Service() {
 
         // Left box (Orange)
         val leftBox = FrameLayout(this).apply {
-            setBackgroundColor(COLOR_ORANGE)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(COLOR_ORANGE)
+                cornerRadius = cornerRadiusPx
+            }
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_DOWN) {
                     onSelectionMade(0)
@@ -538,7 +567,10 @@ class CallManagerService : Service() {
 
         // Right box (Blue)
         val rightBox = FrameLayout(this).apply {
-            setBackgroundColor(COLOR_BLUE)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(COLOR_BLUE)
+                cornerRadius = cornerRadiusPx
+            }
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_DOWN) {
                     onSelectionMade(1)
@@ -619,6 +651,134 @@ class CallManagerService : Service() {
         selectionOverlay = null
     }
 
+    // ==================== CALL CONFIRMATION OVERLAY (Green call + Red cancel) ====================
+
+    private fun showCallConfirmationOverlay() {
+        if (overlayView != null) {
+            Log.w(TAG, "Overlay already showing")
+            return
+        }
+
+        val name = pendingName ?: return
+        Log.d(TAG, "Showing call confirmation overlay for: $name")
+
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val screenWidth = displayMetrics.widthPixels
+        val density = displayMetrics.density
+
+        val marginPx = (24 * density).toInt()
+        val gapPx = (16 * density).toInt()
+        val cornerRadiusPx = (24 * density)
+
+        // Calculate heights
+        val greenHeight = (screenHeight * 0.50).toInt()
+        val redHeight = (screenHeight * 0.35).toInt()
+
+        // Main container
+        val mainContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        }
+
+        // GREEN CALL BUTTON (top)
+        val greenButton = FrameLayout(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(COLOR_GREEN)
+                cornerRadius = cornerRadiusPx
+            }
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    handleCallTap()
+                }
+                true
+            }
+        }
+
+        val nameText = TextView(this).apply {
+            text = formatNameForButton(stripRoutingSuffix(name))
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding((16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt())
+        }
+        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+            nameText, 24, 72, 2, TypedValue.COMPLEX_UNIT_SP
+        )
+        greenButton.addView(nameText, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        // RED CANCEL BUTTON (bottom)
+        val redButton = FrameLayout(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(COLOR_RED)
+                cornerRadius = cornerRadiusPx
+            }
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    handleCancelTap()
+                }
+                true
+            }
+        }
+
+        val cancelText = TextView(this).apply {
+            text = "ΑΚΥΡΩΣΗ"
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 42f)
+        }
+        redButton.addView(cancelText, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        // Add buttons to container
+        val greenParams = LinearLayout.LayoutParams(screenWidth - (marginPx * 2), greenHeight)
+        greenParams.bottomMargin = gapPx
+        mainContainer.addView(greenButton, greenParams)
+
+        val redParams = LinearLayout.LayoutParams(screenWidth - (marginPx * 2), redHeight)
+        mainContainer.addView(redButton, redParams)
+
+        overlayView = mainContainer
+
+        val params = WindowManager.LayoutParams(
+            screenWidth,
+            greenHeight + redHeight + gapPx + marginPx,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = marginPx
+            x = 0
+        }
+
+        try {
+            windowManager?.addView(overlayView, params)
+            Log.d(TAG, "Call confirmation overlay added successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add call confirmation overlay", e)
+        }
+    }
+
+    /**
+     * Handle green call button tap
+     */
+    private fun handleCallTap() {
+        Log.i(TAG, "Call button tapped, placing call")
+
+        vibrateShort()
+
+        currentPhase = CallPhase.CALLING
+        placeCall()
+    }
+
     // ==================== CANCEL OVERLAY (Red button with name) ====================
 
     private fun showCancelOverlay(contactName: String) {
@@ -635,9 +795,13 @@ class CallManagerService : Service() {
         val density = displayMetrics.density
 
         val marginPx = (24 * density).toInt()
+        val cornerRadiusPx = (24 * density)
 
         val container = FrameLayout(this).apply {
-            setBackgroundColor(COLOR_RED)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(COLOR_RED)
+                cornerRadius = cornerRadiusPx
+            }
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_DOWN) {
                     handleCancelTap()

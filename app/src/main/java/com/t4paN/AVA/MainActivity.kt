@@ -1,4 +1,3 @@
-//MainActivity.kt
 package com.t4paN.AVA
 
 import android.Manifest
@@ -77,7 +76,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Register unlock receiver dynamically (must be outside the if block!)
+        // Register unlock receiver dynamically
         val unlockReceiver = UnlockReceiver()
         val filter = IntentFilter(Intent.ACTION_USER_PRESENT)
         registerReceiver(unlockReceiver, filter)
@@ -109,10 +108,19 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPrepareOptionsMenu(menu: Menu): Boolean {
         val prefs = getSharedPreferences("ava_settings", MODE_PRIVATE)
-        val enabled = prefs.getBoolean("start_on_unlock", false)
-        val item = menu.findItem(R.id.action_toggle_unlock)
-        item.title = if (enabled) "Start on unlock: ON" else "Start on unlock: OFF"
-        item.isChecked = enabled
+
+        // Update "Start on unlock" menu item
+        val unlockEnabled = prefs.getBoolean("start_on_unlock", false)
+        val unlockItem = menu.findItem(R.id.action_toggle_unlock)
+        unlockItem.title = if (unlockEnabled) "Start on unlock: ON" else "Start on unlock: OFF"
+        unlockItem.isChecked = unlockEnabled
+
+        // Update "Auto-call" menu item
+        val autoCallEnabled = prefs.getBoolean("auto_call_enabled", true)
+        val autoCallItem = menu.findItem(R.id.action_toggle_autocall)
+        autoCallItem.title = if (autoCallEnabled) "Auto-call: ON" else "Auto-call: OFF"
+        autoCallItem.isChecked = autoCallEnabled
+
         return super.onPrepareOptionsMenu(menu)
     }
 
@@ -127,6 +135,17 @@ class MainActivity : AppCompatActivity() {
                 Snackbar.make(binding.root,
                     if (newValue) "AVA will start on unlock" else "Unlock start disabled",
                     Snackbar.LENGTH_SHORT).show()
+                true
+            }
+            R.id.action_toggle_autocall -> {
+                val prefs = getSharedPreferences("ava_settings", MODE_PRIVATE)
+                val currentlyEnabled = prefs.getBoolean("auto_call_enabled", true)
+                val newValue = !currentlyEnabled
+                prefs.edit().putBoolean("auto_call_enabled", newValue).apply()
+                invalidateOptionsMenu()
+                Snackbar.make(binding.root,
+                    if (newValue) "Auto-call enabled" else "Auto-call disabled (show confirmation)",
+                    Snackbar.LENGTH_LONG).show()
                 true
             }
             R.id.action_settings -> true

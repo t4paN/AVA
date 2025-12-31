@@ -10,6 +10,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -23,6 +26,13 @@ import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.greekvoiceassistant.whisper.engine.WhisperEngine
@@ -43,13 +53,18 @@ class RecordingService : Service() {
     private var isProcessing = false
     private var recordingThread: Thread? = null
     private var vadPipeline: VadAudioPipeline? = null
-    
+
     // TTS for prompt
     private var tts: TextToSpeech? = null
     private var ttsReady = false
-    
+
     // Vibrator for haptic feedback
     private var vibrator: Vibrator? = null
+
+    // Cancel overlay
+    private var windowManager: WindowManager? = null
+    private var cancelOverlay: View? = null
+    private var isCancelled = false
 
     // Timeout runnable as a field so we can cancel it specifically
     private val timeoutRunnable = Runnable {
@@ -84,6 +99,9 @@ class RecordingService : Service() {
 
         // Nuclear reset action
         const val ACTION_NUKE_APP = "NUKE_APP"
+
+        // Colors
+        private const val COLOR_RED = 0xFFCC0000.toInt()
 
         // Store transcription logs for display in FirstFragment
         private val transcriptionLogs = mutableListOf<TranscriptionLog>()
@@ -213,6 +231,9 @@ class RecordingService : Service() {
         super.onCreate()
         startSilentNotification()
 
+        // Initialize WindowManager
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
         // Load persisted logs on startup
         loadPersistedLogs(this)
 
@@ -226,7 +247,7 @@ class RecordingService : Service() {
 
         // Initialize VAD pipeline
         vadPipeline = VadAudioPipeline(this)
-        
+
         // Initialize vibrator
         vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -235,11 +256,11 @@ class RecordingService : Service() {
             @Suppress("DEPRECATION")
             getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
-        
+
         // Initialize TTS
         initTTS()
     }
-    
+
     private fun initTTS() {
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
@@ -255,28 +276,32 @@ class RecordingService : Service() {
                 ttsReady = false
             }
         }
-        
+
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
                 Log.d(TAG, "TTS started: $utteranceId")
             }
-            
+
             override fun onDone(utteranceId: String?) {
                 Log.d(TAG, "TTS done: $utteranceId")
                 if (utteranceId == "prompt") {
                     // TTS finished, now vibrate and start recording
                     handler.post {
-                        vibrateAndStartRecording()
+                        if (!isCancelled) {
+                            vibrateAndStartRecording()
+                        }
                     }
                 }
             }
-            
+
             override fun onError(utteranceId: String?) {
                 Log.e(TAG, "TTS error: $utteranceId")
                 if (utteranceId == "prompt") {
                     // Even if TTS fails, proceed with recording
                     handler.post {
-                        vibrateAndStartRecording()
+                        if (!isCancelled) {
+                            vibrateAndStartRecording()
+                        }
                     }
                 }
             }
@@ -307,21 +332,25 @@ class RecordingService : Service() {
     }
 
     private fun playPrompt() {
+        if (isCancelled) return
+
         Log.d(TAG, "Playing TTS prompt...")
-        
+
         initializeWhisperIfNeeded()
-        
+
         if (ttsReady && tts != null) {
             tts?.speak("Πείτε όνομα", TextToSpeech.QUEUE_FLUSH, null, "prompt")
         } else {
             // TTS not ready, wait a bit and try again or skip
             Log.w(TAG, "TTS not ready, waiting 200ms...")
             handler.postDelayed({
-                if (ttsReady && tts != null) {
-                    tts?.speak("Πείτε όνομα", TextToSpeech.QUEUE_FLUSH, null, "prompt")
-                } else {
-                    Log.w(TAG, "TTS still not ready, skipping prompt")
-                    vibrateAndStartRecording()
+                if (!isCancelled) {
+                    if (ttsReady && tts != null) {
+                        tts?.speak("Πείτε όνομα", TextToSpeech.QUEUE_FLUSH, null, "prompt")
+                    } else {
+                        Log.w(TAG, "TTS still not ready, skipping prompt")
+                        vibrateAndStartRecording()
+                    }
                 }
             }, 100)
         }
@@ -331,6 +360,8 @@ class RecordingService : Service() {
      * Play beep, vibrate, then start recording
      */
     private fun vibrateAndStartRecording() {
+        if (isCancelled) return
+
         Log.d(TAG, "Beep + vibrate before recording...")
 
         // Play beep
@@ -358,7 +389,9 @@ class RecordingService : Service() {
 
         // Start recording after beep finishes
         handler.postDelayed({
-            prepareRecorder()
+            if (!isCancelled) {
+                prepareRecorder()
+            }
         }, 200)
     }
 
@@ -404,9 +437,9 @@ class RecordingService : Service() {
     }
 
     private fun prepareRecorder() {
-        if (isRecording) return
+        if (isRecording || isCancelled) return
 
-// Check permission
+        // Check permission
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 this,
                 android.Manifest.permission.RECORD_AUDIO
@@ -444,8 +477,6 @@ class RecordingService : Service() {
             audioRecord?.startRecording()
             Log.d(TAG, "Recording started!")
 
-            safeToast("Recording...")
-
             recordingThread = Thread {
                 recordAudio(bufferSize)
             }
@@ -476,7 +507,7 @@ class RecordingService : Service() {
         var speechEndDetected = false
 
         try {
-            while (isRecording && totalSamplesRead < maxSamples && !speechEndDetected) {
+            while (isRecording && totalSamplesRead < maxSamples && !speechEndDetected && !isCancelled) {
                 // Read exactly one frame worth of samples
                 val shortsRead = audioRecord?.read(frameBuffer, 0, frameSize) ?: 0
 
@@ -505,7 +536,7 @@ class RecordingService : Service() {
 
             // Signal that recording is done
             handler.post {
-                if (isRecording) {
+                if (isRecording && !isCancelled) {
                     stopRecordingImmediately()
                 }
             }
@@ -513,7 +544,7 @@ class RecordingService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error during recording", e)
             handler.post {
-                if (isRecording) {
+                if (isRecording && !isCancelled) {
                     stopRecordingImmediately()
                 }
             }
@@ -524,8 +555,8 @@ class RecordingService : Service() {
      * Stop recording immediately and go straight to transcription.
      */
     private fun stopRecordingImmediately() {
-        if (!isRecording) {
-            Log.d(TAG, "stopRecordingImmediately called but already stopped, ignoring")
+        if (!isRecording || isCancelled) {
+            Log.d(TAG, "stopRecordingImmediately called but already stopped or cancelled, ignoring")
             return
         }
 
@@ -560,19 +591,21 @@ class RecordingService : Service() {
             audioRecord = null
 
             Log.d(TAG, "Going directly to transcription")
-            if (!isProcessing) {
+            if (!isProcessing && !isCancelled) {
                 transcribeAudio()
             }
 
         } catch (e: Exception) {
             Log.e(TAG, "Stop recording error", e)
-            if (!isProcessing) {
+            if (!isProcessing && !isCancelled) {
                 handler.postDelayed({ transcribeAudio() }, 100)
             }
         }
     }
 
     private fun transcribeAudio() {
+        if (isCancelled) return
+
         Thread {
             try {
                 isProcessing = true
@@ -594,6 +627,7 @@ class RecordingService : Service() {
 
                     handler.post {
                         safeToast("No speech detected")
+                        hideCancelOverlay()
                     }
                     return@Thread
                 }
@@ -632,6 +666,7 @@ class RecordingService : Service() {
 
                     handler.post {
                         safeToast("Transcription was empty!")
+                        hideCancelOverlay()
                     }
                 }
 
@@ -639,9 +674,13 @@ class RecordingService : Service() {
                 Log.e(TAG, "Transcription error", e)
                 handler.post {
                     safeToast("Error: ${e.message}")
+                    hideCancelOverlay()
                 }
             } finally {
                 isProcessing = false
+                handler.post {
+                    hideCancelOverlay()
+                }
                 Log.d(TAG, "Transcription complete, service staying alive for next recording")
             }
         }.start()
@@ -884,6 +923,163 @@ class RecordingService : Service() {
         }
     }
 
+    /**
+     * Show red cancel button with rounded corners
+     */
+    private fun showCancelOverlay() {
+        if (cancelOverlay != null) {
+            Log.w(TAG, "Cancel overlay already showing")
+            return
+        }
+
+        Log.d(TAG, "Showing cancel overlay")
+
+        val displayMetrics = resources.displayMetrics
+        val screenHeight = displayMetrics.heightPixels
+        val screenWidth = displayMetrics.widthPixels
+        val density = displayMetrics.density
+
+        val marginPx = (24 * density).toInt()
+        val cornerRadiusPx = (24 * density)  // Nice rounded corners
+
+        val container = FrameLayout(this).apply {
+            // Create rounded background
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(COLOR_RED)
+                cornerRadius = cornerRadiusPx
+            }
+
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    handleCancelTap()
+                }
+                true
+            }
+        }
+
+        val cancelText = TextView(this).apply {
+            text = "ΑΚΥΡΩΣΗ"
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 48f)
+        }
+
+        container.addView(cancelText, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        cancelOverlay = container
+
+        val params = WindowManager.LayoutParams(
+            screenWidth - (marginPx * 2),
+            (screenHeight / 2) - marginPx,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = marginPx
+        }
+
+        try {
+            windowManager?.addView(cancelOverlay, params)
+            Log.d(TAG, "Cancel overlay added successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add cancel overlay", e)
+        }
+    }
+
+    /**
+     * Hide cancel overlay
+     */
+    private fun hideCancelOverlay() {
+        cancelOverlay?.let { view ->
+            try {
+                windowManager?.removeView(view)
+                Log.d(TAG, "Cancel overlay removed")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error removing cancel overlay", e)
+            }
+        }
+        cancelOverlay = null
+    }
+
+    /**
+     * Handle cancel button tap - buzz, beep, cleanup
+     */
+    private fun handleCancelTap() {
+        if (isCancelled) {
+            Log.d(TAG, "Already cancelled, ignoring duplicate tap")
+            return
+        }
+
+        Log.i(TAG, "Cancel tapped - stopping recording")
+        isCancelled = true
+
+        // Short vibration
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(100)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Vibration error", e)
+        }
+
+        // Short beep
+        try {
+            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+            handler.postDelayed({
+                toneGen.release()
+            }, 200)
+        } catch (e: Exception) {
+            Log.e(TAG, "Beep error", e)
+        }
+
+        // Stop everything
+        stopEverything()
+
+        // Cleanup and stop service
+        handler.postDelayed({
+            hideCancelOverlay()
+            stopSelf()
+        }, 300)  // Give beep/buzz time to complete
+    }
+
+    /**
+     * Emergency stop for all recording/processing
+     */
+    private fun stopEverything() {
+        Log.d(TAG, "Emergency stop - cancelling all operations")
+
+        // Stop TTS
+        tts?.stop()
+
+        // Stop recording
+        isRecording = false
+        isProcessing = false
+
+        try {
+            audioRecord?.stop()
+            audioRecord?.release()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping AudioRecord", e)
+        }
+        audioRecord = null
+
+        // Cancel ALL pending callbacks
+        handler.removeCallbacksAndMessages(null)
+
+        // Reset VAD
+        vadPipeline?.reset()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // NUKE handler - must be first
         if (intent?.action == ACTION_NUKE_APP) {
@@ -904,10 +1100,18 @@ class RecordingService : Service() {
             return START_STICKY
         }
 
-        // Start a new recording session
+        // Reset cancellation flag
+        isCancelled = false
+
+        // Show cancel button FIRST
+        showCancelOverlay()
+
+        // Then start recording session
         Log.d(TAG, "Starting new recording session")
         handler.postDelayed({
-            playPrompt()
+            if (!isCancelled) {
+                playPrompt()
+            }
         }, 100)
 
         return START_STICKY
@@ -922,7 +1126,6 @@ class RecordingService : Service() {
             Log.e(TAG, "Error unregistering receiver", e)
         }
 
-        handler.removeCallbacks(timeoutRunnable)
         handler.removeCallbacksAndMessages(null)
 
         isRecording = false
@@ -946,6 +1149,9 @@ class RecordingService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Error cleaning up VAD pipeline", e)
         }
+
+        // Hide cancel overlay
+        hideCancelOverlay()
 
         audioRecord = null
         tts = null
