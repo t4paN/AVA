@@ -21,7 +21,6 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
@@ -37,7 +36,6 @@ import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.widget.TextViewCompat
-import java.util.Locale
 
 /**
  * CallManagerService - Owns the entire post-match call flow
@@ -96,7 +94,6 @@ class CallManagerService : Service() {
 
     // System services
     private var windowManager: WindowManager? = null
-    private var tts: TextToSpeech? = null
     private var vibrator: Vibrator? = null
     private var telephonyManager: TelephonyManager? = null
     private var telecomManager: TelecomManager? = null
@@ -107,6 +104,9 @@ class CallManagerService : Service() {
 
     // Handler for delays
     private val handler = Handler(Looper.getMainLooper())
+
+    // Service lifecycle flag
+    private var isServiceAlive = true
 
     // Auto-call setting
     private val autoCallEnabled: Boolean
@@ -119,6 +119,7 @@ class CallManagerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isServiceAlive = true
         Log.d(TAG, "CallManagerService created")
 
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -133,7 +134,10 @@ class CallManagerService : Service() {
             getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
 
-        initTTS()
+        // Initialize TTS via TtsManager and set up our listener
+        TtsManager.initialize(this)
+        setupTtsListener()
+
         startForegroundNotification()
     }
 
@@ -164,6 +168,7 @@ class CallManagerService : Service() {
     }
 
     override fun onDestroy() {
+        isServiceAlive = false
         super.onDestroy()
         Log.d(TAG, "CallManagerService destroyed")
         cleanup()
@@ -196,38 +201,34 @@ class CallManagerService : Service() {
         startForeground(NOTIFICATION_ID, notification)
     }
 
-    private fun initTTS() {
-        tts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                val result = tts?.setLanguage(Locale("el", "GR"))
-                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    Log.e(TAG, "Greek TTS not supported, falling back to default")
-                    tts?.setLanguage(Locale.getDefault())
-                }
-                Log.d(TAG, "TTS initialized")
-            } else {
-                Log.e(TAG, "TTS initialization failed")
-            }
-        }
-
-        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+    private fun setupTtsListener() {
+        TtsManager.setUtteranceListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
+                if (!isServiceAlive) return
                 Log.d(TAG, "TTS started: $utteranceId")
             }
 
             override fun onDone(utteranceId: String?) {
+                if (!isServiceAlive) return
                 Log.d(TAG, "TTS done: $utteranceId")
                 if (utteranceId == "call_announcement") {
                     handler.postDelayed({
-                        onAnnouncementComplete()
+                        if (isServiceAlive) {
+                            onAnnouncementComplete()
+                        }
                     }, POST_TTS_BUFFER_MS)
                 }
             }
 
             override fun onError(utteranceId: String?) {
+                if (!isServiceAlive) return
                 Log.e(TAG, "TTS error: $utteranceId")
                 if (utteranceId == "call_announcement") {
-                    handler.post { onAnnouncementComplete() }
+                    handler.post {
+                        if (isServiceAlive) {
+                            onAnnouncementComplete()
+                        }
+                    }
                 }
             }
         })
@@ -281,8 +282,8 @@ class CallManagerService : Service() {
         val cleanName = stripRoutingSuffix(name)
         val text = "Καλώ $cleanName"
         Log.d(TAG, "Announcing: $text")
-        tts?.setSpeechRate(TTS_RATE_NORMAL)
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "call_announcement")
+        TtsManager.setSpeechRate(TTS_RATE_NORMAL)
+        TtsManager.speak(text, "call_announcement")
     }
 
     private fun onAnnouncementComplete() {
@@ -378,7 +379,7 @@ class CallManagerService : Service() {
                             HapticGuideManager.stop()
                         }
                     )
-                }, 300)  // Let Viber load first
+                }, 800)  // Let Viber load first
 
             } else {
                 Log.w(TAG, "Viber not installed, falling back to regular call")
@@ -440,8 +441,8 @@ class CallManagerService : Service() {
             val name2 = stripRoutingSuffix(names.getOrNull(1) ?: "?")
             val prompt = "Επιλογή: $name1 ή $name2"
             Log.d(TAG, "Announcing: $prompt")
-            tts?.setSpeechRate(TTS_RATE_SLOW)
-            tts?.speak(prompt, TextToSpeech.QUEUE_FLUSH, null, "selection_prompt")
+            TtsManager.setSpeechRate(TTS_RATE_SLOW)
+            TtsManager.speak(prompt, "selection_prompt")
         }, 300)
     }
 
@@ -470,7 +471,7 @@ class CallManagerService : Service() {
         // Announce and proceed to call
         currentPhase = CallPhase.ANNOUNCING
         handler.postDelayed({
-            tts?.setSpeechRate(TTS_RATE_NORMAL)
+            TtsManager.setSpeechRate(TTS_RATE_NORMAL)
             announceCall(pendingName!!)
         }, 300)
     }
@@ -868,10 +869,10 @@ class CallManagerService : Service() {
         when (currentPhase) {
             CallPhase.ANNOUNCING -> {
                 Log.i(TAG, "Aborting call before dial")
-                tts?.stop()
+                TtsManager.stop()
                 currentPhase = CallPhase.IDLE
-                tts?.setSpeechRate(TTS_RATE_NORMAL)
-                tts?.speak("Ακυρώθηκε", TextToSpeech.QUEUE_FLUSH, null, "cancelled")
+                TtsManager.setSpeechRate(TTS_RATE_NORMAL)
+                TtsManager.speak("Ακυρώθηκε", "cancelled")
 
                 handler.postDelayed({
                     cleanup()
@@ -885,10 +886,10 @@ class CallManagerService : Service() {
 
             CallPhase.SELECTION -> {
                 Log.i(TAG, "Cancelling selection")
-                tts?.stop()
+                TtsManager.stop()
                 currentPhase = CallPhase.IDLE
-                tts?.setSpeechRate(TTS_RATE_NORMAL)
-                tts?.speak("Ακυρώθηκε", TextToSpeech.QUEUE_FLUSH, null, "cancelled")
+                TtsManager.setSpeechRate(TTS_RATE_NORMAL)
+                TtsManager.speak("Ακυρώθηκε", "cancelled")
 
                 handler.postDelayed({
                     cleanup()
@@ -959,8 +960,8 @@ class CallManagerService : Service() {
     }
 
     private fun speakError(message: String) {
-        tts?.setSpeechRate(TTS_RATE_NORMAL)
-        tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "error")
+        TtsManager.setSpeechRate(TTS_RATE_NORMAL)
+        TtsManager.speak(message, "error")
     }
 
     private fun cleanup() {
@@ -978,8 +979,8 @@ class CallManagerService : Service() {
         hideCancelOverlay()
         hideSelectionOverlay()
 
-        tts?.stop()
-        tts?.setSpeechRate(TTS_RATE_NORMAL)
+        TtsManager.stop()
+        TtsManager.setSpeechRate(TTS_RATE_NORMAL)
 
         handler.removeCallbacksAndMessages(null)
 

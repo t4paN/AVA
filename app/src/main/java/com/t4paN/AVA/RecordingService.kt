@@ -23,7 +23,6 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import android.util.TypedValue
@@ -33,7 +32,6 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.greekvoiceassistant.whisper.engine.WhisperEngine
 import com.greekvoiceassistant.whisper.engine.WhisperEngineJava
@@ -41,7 +39,6 @@ import java.io.File
 import java.io.FileOutputStream
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Locale
 import android.media.AudioManager
 import android.media.ToneGenerator
 
@@ -51,12 +48,12 @@ class RecordingService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var isRecording = false
     private var isProcessing = false
+    private var sessionInProgress = false
     private var recordingThread: Thread? = null
     private var vadPipeline: VadAudioPipeline? = null
 
-    // TTS for prompt
-    private var tts: TextToSpeech? = null
-    private var ttsReady = false
+    // Service lifecycle flag
+    private var isServiceAlive = true
 
     // Vibrator for haptic feedback
     private var vibrator: Vibrator? = null
@@ -214,21 +211,34 @@ class RecordingService : Service() {
                 Log.e(TAG, "Error saving logs to prefs", e)
             }
         }
+
+        fun resetWhisperEngine() {
+            synchronized(whisperLock) {
+                Log.w(TAG, "Force-resetting Whisper engine")
+                try {
+                    sharedWhisperEngine?.deinitialize()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error deinitializing Whisper", e)
+                }
+                sharedWhisperEngine = null
+            }
+        }
     }
 
     private fun safeToast(msg: String) {
         try {
-            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Log.e("ToastFail", "System toast blocked. Falling back.", e)
             Handler(Looper.getMainLooper()).post {
-                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        isServiceAlive = true
         startSilentNotification()
 
         // Initialize WindowManager
@@ -257,55 +267,8 @@ class RecordingService : Service() {
             getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
 
-        // Initialize TTS
-        initTTS()
-    }
-
-    private fun initTTS() {
-        tts = TextToSpeech(this) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                val result = tts?.setLanguage(Locale("el", "GR"))
-                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    Log.w(TAG, "Greek TTS not available, using default")
-                    tts?.setLanguage(Locale.getDefault())
-                }
-                ttsReady = true
-                Log.d(TAG, "TTS initialized and ready")
-            } else {
-                Log.e(TAG, "TTS initialization failed")
-                ttsReady = false
-            }
-        }
-
-        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {
-                Log.d(TAG, "TTS started: $utteranceId")
-            }
-
-            override fun onDone(utteranceId: String?) {
-                Log.d(TAG, "TTS done: $utteranceId")
-                if (utteranceId == "prompt") {
-                    // TTS finished, now vibrate and start recording
-                    handler.post {
-                        if (!isCancelled) {
-                            vibrateAndStartRecording()
-                        }
-                    }
-                }
-            }
-
-            override fun onError(utteranceId: String?) {
-                Log.e(TAG, "TTS error: $utteranceId")
-                if (utteranceId == "prompt") {
-                    // Even if TTS fails, proceed with recording
-                    handler.post {
-                        if (!isCancelled) {
-                            vibrateAndStartRecording()
-                        }
-                    }
-                }
-            }
-        })
+        // Initialize TTS via TtsManager
+        TtsManager.initialize(this)
     }
 
     private fun startSilentNotification() {
@@ -338,21 +301,43 @@ class RecordingService : Service() {
 
         initializeWhisperIfNeeded()
 
-        if (ttsReady && tts != null) {
-            tts?.speak("Πείτε όνομα", TextToSpeech.QUEUE_FLUSH, null, "prompt")
-        } else {
-            // TTS not ready, wait a bit and try again or skip
-            Log.w(TAG, "TTS not ready, waiting 200ms...")
-            handler.postDelayed({
-                if (!isCancelled) {
-                    if (ttsReady && tts != null) {
-                        tts?.speak("Πείτε όνομα", TextToSpeech.QUEUE_FLUSH, null, "prompt")
-                    } else {
-                        Log.w(TAG, "TTS still not ready, skipping prompt")
-                        vibrateAndStartRecording()
+        // Set up utterance listener for this session
+        TtsManager.setUtteranceListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {
+                if (!isServiceAlive) return
+                Log.d(TAG, "TTS started: $utteranceId")
+            }
+
+            override fun onDone(utteranceId: String?) {
+                if (!isServiceAlive) return
+                Log.d(TAG, "TTS done: $utteranceId")
+                if (utteranceId == "prompt") {
+                    handler.post {
+                        if (!isCancelled && isServiceAlive) {
+                            vibrateAndStartRecording()
+                        }
                     }
                 }
-            }, 100)
+            }
+
+            override fun onError(utteranceId: String?) {
+                if (!isServiceAlive) return
+                Log.e(TAG, "TTS error: $utteranceId")
+                if (utteranceId == "prompt") {
+                    handler.post {
+                        if (!isCancelled && isServiceAlive) {
+                            vibrateAndStartRecording()
+                        }
+                    }
+                }
+            }
+        })
+
+        if (TtsManager.isReady) {
+            TtsManager.speak("Πείτε όνομα", "prompt")
+        } else {
+            Log.w(TAG, "TTS not ready, skipping prompt")
+            vibrateAndStartRecording()
         }
     }
 
@@ -637,6 +622,26 @@ class RecordingService : Service() {
                 val audioDurationMs = (audioSamples.size * 1000) / SAMPLE_RATE
                 Log.d(TAG, "Audio samples: ${audioSamples.size} (${audioDurationMs}ms)")
 
+                // Guard against too-short audio crashing Whisper
+                if (audioSamples.size < 3200) {  // 200ms minimum @ 16kHz
+                    Log.w(TAG, "Audio too short for Whisper: ${audioSamples.size} samples (${audioDurationMs}ms)")
+                    val logEntry = TranscriptionLog(
+                        originalTranscript = "(audio too short)",
+                        fuzzifiedTranscript = "(audio too short)",
+                        transcriptionTimeMs = 0,
+                        matchedContact = null,
+                        confidence = null,
+                        confidenceBreakdown = null
+                    )
+                    addLogEntry(logEntry)
+
+                    handler.post {
+                        TtsManager.speak("Δεν άκουσα τίποτα", "too_short")
+                        hideCancelOverlay()
+                    }
+                    return@Thread
+                }
+
                 // Optional: Log audio statistics for debugging
                 if (audioSamples.isNotEmpty()) {
                     val maxAmp = audioSamples.maxOrNull() ?: 0f
@@ -645,7 +650,21 @@ class RecordingService : Service() {
                 }
 
                 val startTime = System.currentTimeMillis()
-                val transcription = sharedWhisperEngine?.transcribeBuffer(audioSamples) ?: ""
+                val transcription = try {
+                    sharedWhisperEngine?.transcribeBuffer(audioSamples) ?: ""
+                } catch (e: Exception) {
+                    Log.e(TAG, "Whisper crashed, resetting engine", e)
+                    resetWhisperEngine()
+                    initializeWhisperIfNeeded()
+
+                    // Retry once
+                    try {
+                        sharedWhisperEngine?.transcribeBuffer(audioSamples) ?: ""
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "Whisper failed after reset", e2)
+                        ""
+                    }
+                }
                 val transcriptionTime = System.currentTimeMillis() - startTime
 
                 Log.d(TAG, "Transcription took ${transcriptionTime}ms")
@@ -678,6 +697,7 @@ class RecordingService : Service() {
                 }
             } finally {
                 isProcessing = false
+                sessionInProgress = false
                 handler.post {
                     hideCancelOverlay()
                 }
@@ -761,7 +781,7 @@ class RecordingService : Service() {
 
                 handler.post {
                     safeToast("No command detected")
-                    tts?.speak("Δεν αναγνωρίστηκε εντολή", TextToSpeech.QUEUE_FLUSH, null, "no_intent")
+                    TtsManager.speak("Δεν αναγνωρίστηκε εντολή", "no_intent")
                 }
             }
         }
@@ -874,9 +894,9 @@ class RecordingService : Service() {
                     safeToast("No contact match found")
                 }
 
-                // Speak "not found" in Greek using existing TTS
+                // Speak "not found" in Greek
                 handler.post {
-                    tts?.speak("Δεν βρέθηκε επαφή", TextToSpeech.QUEUE_FLUSH, null, "not_found")
+                    TtsManager.speak("Δεν βρέθηκε επαφή", "not_found")
                 }
             }
         }
@@ -906,6 +926,10 @@ class RecordingService : Service() {
      */
     private fun nukeAppProcess() {
         try {
+            // Reset both engines
+            resetWhisperEngine()
+            TtsManager.reset()
+
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
 
@@ -1045,11 +1069,13 @@ class RecordingService : Service() {
         // Stop everything
         stopEverything()
 
-        // Cleanup and stop service
+        // Cleanup but keep service alive
         handler.postDelayed({
             hideCancelOverlay()
-            stopSelf()
-        }, 300)  // Give beep/buzz time to complete
+            sessionInProgress = false
+            // Don't call stopSelf()
+            Log.d(TAG, "Session cancelled, service ready for next trigger")
+        }, 300)
     }
 
     /**
@@ -1058,8 +1084,8 @@ class RecordingService : Service() {
     private fun stopEverything() {
         Log.d(TAG, "Emergency stop - cancelling all operations")
 
-        // Stop TTS
-        tts?.stop()
+        // Stop TTS via manager
+        TtsManager.stop()
 
         // Stop recording
         isRecording = false
@@ -1094,14 +1120,15 @@ class RecordingService : Service() {
             return START_STICKY
         }
 
-        // Check if already busy
-        if (isRecording || isProcessing) {
-            Log.w(TAG, "Service already busy, ignoring duplicate start request")
+        // Check if session already in progress
+        if (sessionInProgress) {
+            Log.w(TAG, "Session already in progress, ignoring duplicate start")
             return START_STICKY
         }
 
-        // Reset cancellation flag
+        // Reset flags for new session
         isCancelled = false
+        sessionInProgress = true
 
         // Show cancel button FIRST
         showCancelOverlay()
@@ -1118,6 +1145,7 @@ class RecordingService : Service() {
     }
 
     override fun onDestroy() {
+        isServiceAlive = false
         super.onDestroy()
 
         try {
@@ -1129,6 +1157,7 @@ class RecordingService : Service() {
         handler.removeCallbacksAndMessages(null)
 
         isRecording = false
+        sessionInProgress = false
 
         try {
             audioRecord?.stop()
@@ -1137,12 +1166,8 @@ class RecordingService : Service() {
             Log.e(TAG, "Error cleaning up AudioRecord", e)
         }
 
-        try {
-            tts?.stop()
-            tts?.shutdown()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error cleaning up TTS", e)
-        }
+        // Stop TTS but don't shutdown - keep it alive
+        TtsManager.stop()
 
         try {
             vadPipeline?.close()
@@ -1154,10 +1179,9 @@ class RecordingService : Service() {
         hideCancelOverlay()
 
         audioRecord = null
-        tts = null
         vadPipeline = null
 
-        Log.d(TAG, "RecordingService destroyed (WhisperEngine kept alive)")
+        Log.d(TAG, "RecordingService destroyed (WhisperEngine and TTS kept alive)")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
