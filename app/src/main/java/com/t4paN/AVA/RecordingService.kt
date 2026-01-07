@@ -759,10 +759,9 @@ class RecordingService : Service() {
                 addLogEntry(logEntry)
 
                 handler.post {
-                    safeToast("Radio detected!")
+                    hideCancelOverlay()
+                    RadioActivity.launch(this@RecordingService)
                 }
-
-                // TODO: Implement radio playback
             }
 
             null -> {

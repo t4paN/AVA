@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#1A1A1A">
+
+    <!-- TOP ZONE - Next Station (Green) -->
+    <FrameLayout
+        android:id="@+id/zoneNext"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#4D4CAF50">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="▲"
+                android:textSize="72sp"
+                android:textColor="#4CAF50"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ΕΠΟΜΕΝΟΣ"
+                android:textSize="24sp"
+                android:textColor="#B34CAF50" />
+
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- MIDDLE ZONE - Play/Stop (Blue/Purple) -->
+    <FrameLayout
+        android:id="@+id/zonePlayStop"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1.5"
+        android:background="#4D2196F3">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <TextView
+                android:id="@+id/txtPlayStopIcon"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="▶"
+                android:textSize="96sp"
+                android:textColor="#2196F3"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/txtStationName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ΕΡΑ Σπορ"
+                android:textSize="28sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:layout_marginTop="16dp" />
+
+            <TextView
+                android:id="@+id/txtPlayStopHint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ΠΑΤΑ ΓΙΑ PLAY"
+                android:textSize="18sp"
+                android:textColor="#80FFFFFF"
+                android:layout_marginTop="8dp" />
+
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- BOTTOM ZONE - Previous Station (Orange) -->
+    <FrameLayout
+        android:id="@+id/zonePrev"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#4DFF9800">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="▼"
+                android:textSize="72sp"
+                android:textColor="#FF9800"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ΠΡΟΗΓΟΥΜΕΝΟΣ"
+                android:textSize="24sp"
+                android:textColor="#B3FF9800" />
+
+        </LinearLayout>
+    </FrameLayout>
+
+</LinearLayout>
