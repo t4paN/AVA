@@ -1,3 +1,5 @@
+//MainActivity.kt
+
 package com.t4paN.AVA
 
 import android.Manifest
@@ -16,6 +18,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.t4paN.AVA.databinding.ActivityMainBinding
 import android.content.IntentFilter
+import android.app.AlertDialog
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.ScrollView
+
 
 class MainActivity : AppCompatActivity() {
 
@@ -93,6 +101,103 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showStationManagerDialog() {
+        val stations = RadioStations.getAll(this).toMutableList()
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 32, 48, 16)
+        }
+
+        val scrollView = ScrollView(this)
+        val listContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        fun refreshList() {
+            listContainer.removeAllViews()
+            val currentStations = RadioStations.getAll(this)
+
+            if (currentStations.isEmpty()) {
+                listContainer.addView(TextView(this).apply {
+                    text = "Δεν υπάρχουν σταθμοί"
+                    setPadding(0, 16, 0, 16)
+                })
+            } else {
+                currentStations.forEachIndexed { index, station ->
+                    val row = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, 8, 0, 8)
+                    }
+
+                    val label = TextView(this).apply {
+                        text = "${station.displayName}\n${station.streamUrl}"
+                        textSize = 14f
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    }
+
+                    val deleteBtn = TextView(this).apply {
+                        text = "  ✕  "
+                        textSize = 20f
+                        setTextColor(0xFFCC0000.toInt())
+                        setOnClickListener {
+                            RadioStations.removeStation(this@MainActivity, index)
+                            refreshList()
+                        }
+                    }
+
+                    row.addView(label)
+                    row.addView(deleteBtn)
+                    listContainer.addView(row)
+                }
+            }
+        }
+
+        refreshList()
+        scrollView.addView(listContainer)
+        container.addView(scrollView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            400
+        ))
+
+        // Add station input
+        val inputLabel = TextView(this).apply {
+            text = "\nΠροσθήκη σταθμού (Όνομα, URL):"
+            setPadding(0, 24, 0, 8)
+        }
+        container.addView(inputLabel)
+
+        val input = EditText(this).apply {
+            hint = "π.χ. Σκάι, http://netradio.live24.gr/skai1003"
+            setSingleLine(true)
+        }
+        container.addView(input)
+
+        AlertDialog.Builder(this)
+            .setTitle("Σταθμοί Ραδιοφώνου")
+            .setView(container)
+            .setPositiveButton("Προσθήκη") { _, _ ->
+                val text = input.text.toString()
+                val parts = text.split(",", limit = 2)
+                if (parts.size == 2) {
+                    val success = RadioStations.addStation(this, parts[0], parts[1])
+                    if (success) {
+                        Snackbar.make(binding.root, "Προστέθηκε: ${parts[0].trim()}", Snackbar.LENGTH_SHORT).show()
+                    } else {
+                        Snackbar.make(binding.root, "Λάθος μορφή - χρησιμοποιήστε: Όνομα, URL", Snackbar.LENGTH_LONG).show()
+                    }
+                } else {
+                    Snackbar.make(binding.root, "Λάθος μορφή - χρησιμοποιήστε: Όνομα, URL", Snackbar.LENGTH_LONG).show()
+                }
+            }
+            .setNeutralButton("Επαναφορά") { _, _ ->
+                RadioStations.resetToDefaults(this)
+                Snackbar.make(binding.root, "Επαναφορά στους αρχικούς σταθμούς", Snackbar.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Κλείσιμο", null)
+            .show()
+    }
+
     private fun preloadWhisper() {
         Thread {
             val intent = Intent(this, RecordingService::class.java)
@@ -148,6 +253,12 @@ class MainActivity : AppCompatActivity() {
                     Snackbar.LENGTH_LONG).show()
                 true
             }
+
+            R.id.action_manage_stations -> {
+                showStationManagerDialog()
+                true
+            }
+
             R.id.action_settings -> true
             else -> super.onOptionsItemSelected(item)
         }

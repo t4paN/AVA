@@ -20,4 +20,11 @@
         android:orderInCategory="102"
         android:title="@string/action_settings"
         app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_manage_stations"
+        android:orderInCategory="90"
+        android:title="Σταθμοί ραδιοφώνου"
+        app:showAsAction="never" />
+
 </menu>

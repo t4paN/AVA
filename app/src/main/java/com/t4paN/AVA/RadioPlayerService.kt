@@ -86,7 +86,7 @@ class RadioPlayerService : Service() {
         when (intent?.action) {
             ACTION_PLAY -> {
                 val stationIndex = intent.getIntExtra(EXTRA_STATION_INDEX, 0)
-                val station = RadioStations.getByIndex(stationIndex)
+                val station = RadioStations.getByIndex(this, stationIndex)
                 startPlaying(station)
             }
             ACTION_STOP -> {

@@ -104,12 +104,13 @@ class RadioActivity : AppCompatActivity() {
         vibrateClick()
 
         currentStationIndex = if (direction > 0) {
-            RadioStations.nextIndex(currentStationIndex)
+            RadioStations.nextIndex(this, currentStationIndex)
         } else {
-            RadioStations.prevIndex(currentStationIndex)
+            RadioStations.prevIndex(this, currentStationIndex)
         }
 
-        val station = RadioStations.getByIndex(currentStationIndex)
+        val station = RadioStations.getByIndex(this, currentStationIndex)
+
         Log.i(TAG, "Changed to station: ${station.displayName}")
 
         // Update UI
@@ -137,7 +138,7 @@ class RadioActivity : AppCompatActivity() {
             TtsManager.speak("Στοπ")
         } else {
             // PLAY - start fresh
-            val station = RadioStations.getByIndex(currentStationIndex)
+            val station = RadioStations.getByIndex(this, currentStationIndex)
             Log.i(TAG, "Playing: ${station.displayName}")
             RadioPlayerService.play(this, currentStationIndex)
             isPlaying = true
@@ -147,7 +148,7 @@ class RadioActivity : AppCompatActivity() {
     }
 
     private fun updateUI() {
-        val station = RadioStations.getByIndex(currentStationIndex)
+        val station = RadioStations.getByIndex(this, currentStationIndex)
 
         // Update station name
         binding.txtStationName.text = station.displayName
