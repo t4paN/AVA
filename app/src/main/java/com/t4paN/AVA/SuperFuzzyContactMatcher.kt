@@ -1,3 +1,4 @@
+// SuperFuzzyContactMatcher.kt
 package com.t4paN.AVA
 
 import android.util.Log
@@ -6,24 +7,25 @@ import kotlin.math.min
 
 /**
  * Multi-layered fuzzy contact matcher for rough Greek speech transcriptions
- * 
- * NOW WITH: 
+ *
+ * NOW WITH:
  * - Flashlight and Radio intent detection
  * - Lowered threshold (0.6) for better garbled command detection
  * - Multi-word fallback (2+ words = CALL by default)
+ * - Token-level length factor (penalizes tiny tokens matching huge contact names)
  */
 object SuperFuzzyContactMatcher {
     private const val TAG = "FuzzyMatcher"
-    
+
     // Minimum confidence threshold for a match
     private const val MIN_CONFIDENCE = 0.4
-    
+
     // Minimum gap between best and second-best match (prevents ambiguity)
     private const val MIN_CONFIDENCE_GAP = 0.10
-    
+
     // Threshold for fuzzy intent detection (lowered from 0.7 to catch more garbling)
     private const val INTENT_SIMILARITY_THRESHOLD = 0.6
-    
+
     // Greek accent removal map
     private val accentMap = mapOf(
         'ά' to 'α', 'έ' to 'ε', 'ή' to 'η', 'ί' to 'ι', 'ό' to 'ο',
@@ -31,7 +33,7 @@ object SuperFuzzyContactMatcher {
         'Ά' to 'Α', 'Έ' to 'Ε', 'Ή' to 'Η', 'Ί' to 'Ι', 'Ό' to 'Ο',
         'Ύ' to 'Υ', 'Ώ' to 'Ω', 'Ϊ' to 'Ι', 'Ϋ' to 'Υ'
     )
-    
+
     /**
      * Call intent patterns - both clean and garbled variants
      */
@@ -42,23 +44,23 @@ object SuperFuzzyContactMatcher {
         "πάρε", "παρε", "πάρτε", "παρτε",
         "τηλεφώνησε", "τηλεφωνησε", "τηλέφωνο", "τηλεφωνο",
         "καλώ", "καλω", "call", "καλ",
-        
+
         // Garbled prefixes (common after �� removal)
         "ιση", "ισι", "ιθη", "ισθη", "ισθι",
         "υσι", "υση", "υσθι", "υθη",
         "κλυσι", "κλυσί", "κλιση", "κλίση",
         "λιση", "λησι", "λυσι",
-        
+
         // More extreme garbling
         "ζαι", "ζη", "ζι", "ζει",
         "σι", "ση", "θι", "θη",
         "κι", "κη", "κει",
         "λι", "λη", "λει",
-        
+
         // Very short remnants
         "κλ", "κα", "πα", "τη"
     )
-    
+
     /**
      * Flashlight intent patterns
      */
@@ -66,7 +68,7 @@ object SuperFuzzyContactMatcher {
         "φακός", "φακος", "φακό", "φακο",
         "φάκος", "φάκο"
     )
-    
+
     /**
      * Radio intent patterns
      */
@@ -74,7 +76,7 @@ object SuperFuzzyContactMatcher {
         "ραδιόφωνο", "ραδιοφωνο", "ραδιόφωνα", "ραδιοφωνα",
         "ραδιο", "ράδιο", "radio"
     )
-    
+
     /**
      * Intent types the matcher can recognize
      */
@@ -83,7 +85,7 @@ object SuperFuzzyContactMatcher {
         FLASHLIGHT,
         RADIO
     }
-    
+
     /**
      * Result of a contact matching attempt with detailed breakdown
      */
@@ -92,154 +94,154 @@ object SuperFuzzyContactMatcher {
         val confidence: Double,
         val breakdown: String
     )
-    
+
     // Store last ambiguous candidates for debugging
     private var lastAmbiguousCandidates: List<MatchResult>? = null
-    
+
     /**
      * Get the last ambiguous candidates (when match failed due to close scores)
      */
     fun getLastAmbiguousCandidates(): List<MatchResult>? = lastAmbiguousCandidates
-    
+
     /**
      * Clear stored ambiguous candidates
      */
     fun clearAmbiguousCandidates() {
         lastAmbiguousCandidates = null
     }
-    
+
     /**
      * Find the best matching contact for a transcription
-     * 
+     *
      * NOTE: Only processes CALL intents. Other intents should be handled in RecordingService.
      */
     fun findBestMatch(transcription: String, contacts: List<Contact>): MatchResult? {
         // Clear previous ambiguous candidates
         lastAmbiguousCandidates = null
-        
+
         if (contacts.isEmpty()) {
             Log.w(TAG, "No contacts available for matching")
             return null
         }
-        
+
         Log.d(TAG, "=== MATCHING START ===")
         Log.d(TAG, "Raw transcription: '$transcription'")
         Log.d(TAG, "Total contacts: ${contacts.size}")
-        
+
         // Step 1: Clean transcription (removes ��, normalizes)
         val cleaned = cleanTranscription(transcription)
         Log.d(TAG, "After cleaning: '$cleaned'")
-        
+
         // Step 2: Detect intent and strip command
         val (intent, stripped) = detectAndStripIntent(cleaned)
-        
+
         if (intent == null) {
             Log.w(TAG, "No intent detected - aborting match")
             return null
         }
-        
+
         if (intent != Intent.CALL) {
             Log.w(TAG, "Non-CALL intent detected: $intent - aborting contact match")
             return null
         }
-        
+
         Log.d(TAG, "Intent detected: $intent")
         Log.d(TAG, "After intent stripping: '$stripped'")
-        
+
         if (stripped.isBlank()) {
             Log.w(TAG, "No contact name after intent stripping")
             return null
         }
-        
+
         // Step 3: Tokenize and merge (creates bigrams for compound names)
         val originalTokens = stripped.split(" ").filter { it.isNotEmpty() }
         val mergedTokens = mergeTokens(originalTokens)
         Log.d(TAG, "Original tokens: $originalTokens")
         Log.d(TAG, "Merged tokens: $mergedTokens")
-        
+
         // Step 4: Score all contacts (only log scores > 0.5)
         Log.d(TAG, "=== SCORING CONTACTS ===")
         val scored = contacts.map { contact ->
             val (score, breakdown) = matchContact(originalTokens, mergedTokens, contact)
-            
+
             // Only log scores above threshold
             if (score > 0.250) {
                 Log.d(TAG, "  '${contact.displayName}' -> ${String.format("%.3f", score)} | $breakdown")
             }
-            
+
             MatchResult(
                 contact = contact,
                 confidence = score,
                 breakdown = breakdown
             )
         }.sortedByDescending { it.confidence }
-        
+
         if (scored.isEmpty()) return null
-        
+
         // Step 5: Deduplicate by display name (keep highest score)
         val deduplicated = scored
             .groupBy { it.contact.displayName }
             .map { (_, results) -> results.first() }
             .sortedByDescending { it.confidence }
-        
+
         // Show top 5 matches
         Log.d(TAG, "=== TOP 5 MATCHES (after deduplication) ===")
         deduplicated.take(5).forEachIndexed { index, result ->
             Log.d(TAG, "${index + 1}. '${result.contact.displayName}' = ${String.format("%.3f", result.confidence)}")
         }
-        
+
         val best = deduplicated[0]
         val second = deduplicated.getOrNull(1)
-        
+
         // Step 6: Check minimum confidence threshold
         if (best.confidence < MIN_CONFIDENCE) {
             Log.i(TAG, "REJECTED: Best match '${best.contact.displayName}' has score ${String.format("%.3f", best.confidence)} < threshold $MIN_CONFIDENCE")
             return null
         }
-        
+
         // Step 7: Check confidence gap (avoid ambiguous matches)
         if (second != null) {
             val gap = best.confidence - second.confidence
             if (gap < MIN_CONFIDENCE_GAP) {
                 Log.i(TAG, "AMBIGUOUS: '${best.contact.displayName}' (${String.format("%.3f", best.confidence)}) vs '${second.contact.displayName}' (${String.format("%.3f", second.confidence)}), gap ${String.format("%.3f", gap)} < $MIN_CONFIDENCE_GAP")
-                
+
                 // Store ambiguous candidates for debugging
                 lastAmbiguousCandidates = deduplicated.take(3)
-                
+
                 return null
             }
         }
-        
+
         Log.i(TAG, "✓ MATCHED: '${best.contact.displayName}' with confidence ${String.format("%.3f", best.confidence)}")
         Log.d(TAG, "Breakdown: ${best.breakdown}")
         Log.d(TAG, "=== MATCHING END ===")
-        
+
         return best
     }
-    
+
     // --- INTENT DETECTION ---
-    
+
     /**
      * Detect intent and strip command words
-     * 
+     *
      * Strategy (in order):
      * 1. Check single-word special commands (flashlight, radio)
      * 2. Try fuzzy pattern matching for call commands
      * 3. Multi-word fallback: 2+ words = CALL (strip first word)
-     * 
+     *
      * Returns: Pair(Intent?, cleanedText)
      */
     fun detectAndStripIntent(text: String): Pair<Intent?, String> {
         val tokens = text.split(" ").filter { it.isNotEmpty() }
-        
+
         if (tokens.isEmpty()) {
             return Pair(null, text)
         }
-        
+
         // STEP 1: Check for single-word special commands (flashlight, radio)
         if (tokens.size == 1) {
             val word = tokens[0]
-            
+
             // Check flashlight patterns
             val isFlashlight = flashlightIntentPatterns.any { pattern ->
                 similarity(word, pattern) >= INTENT_SIMILARITY_THRESHOLD
@@ -248,7 +250,7 @@ object SuperFuzzyContactMatcher {
                 Log.d(TAG, "Flashlight intent detected: '$word'")
                 return Pair(Intent.FLASHLIGHT, "")
             }
-            
+
             // Check radio patterns
             val isRadio = radioIntentPatterns.any { pattern ->
                 similarity(word, pattern) >= INTENT_SIMILARITY_THRESHOLD
@@ -257,53 +259,53 @@ object SuperFuzzyContactMatcher {
                 Log.d(TAG, "Radio intent detected: '$word'")
                 return Pair(Intent.RADIO, "")
             }
-            
+
             // Single word with no special command = reject
             Log.d(TAG, "Single word with no recognized intent")
             return Pair(null, text)
         }
-        
+
         // STEP 2: Try pattern matching for CALL commands (multi-word)
-        
+
         // Check first token
         val firstToken = tokens[0]
         val firstMatch = callIntentPatterns.any { pattern ->
             similarity(firstToken, pattern) >= INTENT_SIMILARITY_THRESHOLD
         }
-        
+
         if (firstMatch) {
             Log.d(TAG, "Call intent detected in first token: '$firstToken'")
             val remaining = tokens.drop(1).joinToString(" ")
             return Pair(Intent.CALL, remaining)
         }
-        
+
         // Check first two tokens combined
         if (tokens.size >= 2) {
             val firstTwo = tokens[0] + tokens[1]
             val combinedMatch = callIntentPatterns.any { pattern ->
                 similarity(firstTwo, pattern) >= INTENT_SIMILARITY_THRESHOLD
             }
-            
+
             if (combinedMatch) {
                 Log.d(TAG, "Call intent detected in first two tokens: '$firstTwo'")
                 val remaining = tokens.drop(2).joinToString(" ")
                 return Pair(Intent.CALL, remaining)
             }
         }
-        
+
         // STEP 3: Multi-word fallback (assume CALL if 2+ words but no pattern match)
         if (tokens.size >= 2) {
             Log.d(TAG, "No pattern match, but 2+ words - assuming CALL intent, stripping '${tokens[0]}'")
             val remaining = tokens.drop(1).joinToString(" ")
             return Pair(Intent.CALL, remaining)
         }
-        
+
         Log.d(TAG, "No intent detected")
         return Pair(null, text)
     }
-    
+
     // --- CLEANING / NORMALIZATION ---
-    
+
     /**
      * Clean transcription: normalize, remove noise (��), deduplicate repeated chars
      */
@@ -313,15 +315,15 @@ object SuperFuzzyContactMatcher {
         val dedup = noNoise.replace(Regex("([α-ω])\\1{2,}"), "$1") // "δημμμιτρης" → "δημιτρης"
         return dedup.trim().replace(Regex("\\s+"), " ")
     }
-    
+
     /**
      * Normalize Greek: lowercase + remove accents
      */
     private fun normalizeGreek(text: String): String =
         text.lowercase().map { accentMap[it] ?: it }.joinToString("")
-    
+
     // --- TOKEN MERGING ---
-    
+
     /**
      * Merge tokens to handle compound names
      */
@@ -332,19 +334,44 @@ object SuperFuzzyContactMatcher {
         }
         return merged.distinct()
     }
-    
+
+    // --- LENGTH FACTOR ---
+
+    /**
+     * Calculate length ratio factor for token-level matching.
+     *
+     * Penalizes when a short transcription token matches against a much longer
+     * contact name. This prevents tiny common words (3 chars) from getting
+     * high scores against long multi-word contact names (25+ chars).
+     *
+     * Examples:
+     * - "test" (4) vs "test" (4) → ratio 1.0 → factor 1.15 (bonus)
+     * - "test" (4) vs "tester" (6) → ratio 0.67 → factor 1.00 (neutral)
+     * - "foo" (3) vs "verylongname" (12) → ratio 0.25 → factor 0.60 (big penalty)
+     *
+     * Returns a multiplier between 0.60 (extreme mismatch) and 1.15 (perfect match)
+     */
+    private fun calculateLengthFactor(transcriptionLen: Int, contactLen: Int): Double {
+        if (transcriptionLen == 0 || contactLen == 0) return 1.0
+
+        // Ratio of shorter to longer (always 0.0 to 1.0)
+        val ratio = minOf(transcriptionLen, contactLen).toDouble() / maxOf(transcriptionLen, contactLen)
+
+        return when {
+            ratio >= 0.85 -> 1.15  // Near-equal length: 15% bonus
+            ratio >= 0.70 -> 1.05  // Close enough: 5% bonus
+            ratio >= 0.55 -> 0.90  // Getting suspicious: 10% penalty
+            ratio >= 0.40 -> 0.75  // Significant mismatch: 25% penalty
+            else -> 0.60           // Extreme mismatch: 40% penalty
+        }
+    }
+
     // --- CONTACT MATCHING LOGIC ---
-    
-    /**
-     * Match transcription tokens against a contact
-     */
-    /**
-     * Match transcription tokens against a contact
-     * ENFORCES left-to-right token order
-     */
+
     /**
      * Match transcription tokens against a contact
      * ENFORCES left-to-right token order AND character order
+     * APPLIES length factor at token level to penalize tiny matches in huge names
      */
     private fun matchContact(
         originalTokens: List<String>,
@@ -353,11 +380,12 @@ object SuperFuzzyContactMatcher {
     ): Pair<Double, String> {
         val normalizedContact = contact.normalizedName
         val contactTokens = normalizedContact.split(" ").filter { it.isNotEmpty() }
+        val fullContactConcat = contactTokens.joinToString("")
 
         var totalScore = 0.0
         val breakdown = mutableListOf<String>()
 
-        // 1. Best token-to-token score WITH POSITION ENFORCEMENT (60% weight)
+        // 1. Best token-to-token score WITH POSITION ENFORCEMENT AND LENGTH FACTOR (60% weight)
         var bestTokenScore = 0.0
         var bestTokenMatch = ""
 
@@ -390,20 +418,31 @@ object SuperFuzzyContactMatcher {
                 } else {
                     0.0
                 }
-                // For single-token contacts, also try full concatenation
-                if (contactTokens.size == 1) {
-                    val fullSpokenConcat = originalTokens.joinToString("")
-                    val singleTokenScore = similarity(fullSpokenConcat, contactTokens[0])
-                    if (singleTokenScore > bestTokenScore) {
-                        bestTokenScore = singleTokenScore
-                        bestTokenMatch = "'$fullSpokenConcat'~'${contactTokens[0]}'=${"%.3f".format(singleTokenScore)}"
-                    }
-                }
-                val score = min(lev + sub, 1.0) // Cap at 1.0
+
+                val rawScore = min(lev + sub, 1.0) // Cap at 1.0
+
+                // Apply length factor: compare spoken token against FULL contact name
+                // This penalizes tiny tokens matching inside huge contact names
+                val lengthFactor = calculateLengthFactor(spoken.length, ct.length)
+                val score = rawScore * lengthFactor
+
                 if (score > bestScoreForThisToken) {
                     bestScoreForThisToken = score
-                    bestMatchForThisToken = "'$spoken'~'$ct'=${"%.3f".format(score)}"
+                    bestMatchForThisToken = "'$spoken'~'$ct'=${"%.3f".format(rawScore)}*${"%.2f".format(lengthFactor)}"
                     bestContactIdx = ctIdx
+                }
+            }
+
+            // For single-token contacts, also try full concatenation
+            if (contactTokens.size == 1) {
+                val fullSpokenConcat = originalTokens.joinToString("")
+                val rawScore = similarity(fullSpokenConcat, contactTokens[0])
+                val lengthFactor = calculateLengthFactor(fullSpokenConcat.length, contactTokens[0].length)
+                val singleTokenScore = rawScore * lengthFactor
+
+                if (singleTokenScore > bestTokenScore) {
+                    bestTokenScore = singleTokenScore
+                    bestTokenMatch = "'$fullSpokenConcat'~'${contactTokens[0]}'=${"%.3f".format(rawScore)}*${"%.2f".format(lengthFactor)}"
                 }
             }
 
@@ -420,17 +459,19 @@ object SuperFuzzyContactMatcher {
         breakdown.add("Tok:$bestTokenMatch")
         totalScore += bestTokenScore * 0.6
 
-        // 2. Full string comparison (30% weight)
+        // 2. Full string comparison WITH LENGTH FACTOR (30% weight)
         val fullSpoken = originalTokens.joinToString("")
-        val fullContact = contactTokens.joinToString("")
 
-        val fullScore = similarity(fullSpoken, fullContact)
-        breakdown.add("Full:'$fullSpoken'~'$fullContact'=${"%.3f".format(fullScore)}")
+        val rawFullScore = similarity(fullSpoken, fullContactConcat)
+        val fullLengthFactor = calculateLengthFactor(fullSpoken.length, fullContactConcat.length)
+        val fullScore = rawFullScore * fullLengthFactor
+
+        breakdown.add("Full:'$fullSpoken'~'$fullContactConcat'=${"%.3f".format(rawFullScore)}*${"%.2f".format(fullLengthFactor)}")
         totalScore += fullScore * 0.3
 
         // 3. Prefix bonus (10% weight)
         val firstToken = originalTokens.firstOrNull() ?: ""
-        if (fullContact.startsWith(firstToken) && firstToken.isNotEmpty()) {
+        if (fullContactConcat.startsWith(firstToken) && firstToken.isNotEmpty()) {
             breakdown.add("Pre:+0.1")
             totalScore += 0.1
         }
@@ -454,8 +495,9 @@ object SuperFuzzyContactMatcher {
         }
         return true
     }
+
     // --- SIMILARITY FUNCTIONS ---
-    
+
     /**
      * Similarity with phonetic boost
      */
@@ -464,7 +506,7 @@ object SuperFuzzyContactMatcher {
         val ph = levenshteinSimilarity(phoneticSimplify(a), phoneticSimplify(b))
         return maxOf(lev, ph)
     }
-    
+
     /**
      * Phonetic simplification for Greek
      */
@@ -476,27 +518,28 @@ object SuperFuzzyContactMatcher {
         .replace("ει", "ι")
         .replace("οι", "ι")
         .replace("αι", "ε")
+
     /**
      * Calculate Levenshtein similarity (1.0 = identical, 0.0 = completely different)
      */
     private fun levenshteinSimilarity(s1: String, s2: String): Double {
         if (s1 == s2) return 1.0
         if (s1.isEmpty() || s2.isEmpty()) return 0.0
-        
+
         val dist = levenshteinDistance(s1, s2)
         val maxLen = max(s1.length, s2.length)
         return 1.0 - (dist.toDouble() / maxLen)
     }
-    
+
     /**
      * Calculate Levenshtein distance (edit distance)
      */
     private fun levenshteinDistance(s1: String, s2: String): Int {
         val dp = Array(s1.length + 1) { IntArray(s2.length + 1) }
-        
+
         for (i in 0..s1.length) dp[i][0] = i
         for (j in 0..s2.length) dp[0][j] = j
-        
+
         for (i in 1..s1.length) {
             for (j in 1..s2.length) {
                 val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1

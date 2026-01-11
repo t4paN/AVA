@@ -29,6 +29,7 @@ public class WhisperEngineJava implements WhisperEngine {
     private final Context mContext;
     private boolean mIsInitialized = false;
     private Interpreter mInterpreter = null;
+    private GpuDelegate gpuDelegate = null;
 
     public WhisperEngineJava(Context context) {
         mContext = context;
@@ -63,6 +64,12 @@ public class WhisperEngineJava implements WhisperEngine {
         if (mInterpreter != null) {
             mInterpreter.close();
             mInterpreter = null;
+        }
+        if (gpuDelegate != null) {
+            try {
+                gpuDelegate.close();
+            } catch (Exception ignored) {}
+            gpuDelegate = null;
         }
     }
 
@@ -100,6 +107,7 @@ public class WhisperEngineJava implements WhisperEngine {
 
         return result;
     }
+
     private void loadModel(String modelPath) throws IOException {
         FileInputStream fileInputStream = new FileInputStream(modelPath);
         FileChannel fileChannel = fileInputStream.getChannel();
@@ -108,10 +116,45 @@ public class WhisperEngineJava implements WhisperEngine {
         ByteBuffer tfliteModel = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
 
         Interpreter.Options options = new Interpreter.Options();
-        options.setUseXNNPACK(true);
         options.setNumThreads(6);
+
+        boolean gpuSuccess = false;
+
+        // Try GPU delegate first
+        try {
+
+            gpuDelegate = new GpuDelegate();
+
+            Interpreter.Options gpuTestOptions = new Interpreter.Options();
+            gpuTestOptions.setNumThreads(6);
+            gpuTestOptions.addDelegate(gpuDelegate);
+
+            // Test if interpreter actually initializes with GPU
+            Interpreter testInterpreter = new Interpreter(tfliteModel, gpuTestOptions);
+            testInterpreter.close();
+
+            // If we got here, GPU works - use it for real
+            options.addDelegate(gpuDelegate);
+            gpuSuccess = true;
+            Log.d(TAG, "✓ GPU Delegate enabled");
+
+        } catch (Exception e) {
+            Log.w(TAG, "✗ GPU Delegate failed: " + e.getMessage());
+            if (gpuDelegate != null) {
+                try {
+                    gpuDelegate.close();
+                } catch (Exception ignored) {}
+                gpuDelegate = null;
+            }
+        }
+
+        // Fallback to XNNPACK if GPU didn't work
+        if (!gpuSuccess) {
+            Log.d(TAG, "Using XNNPACK fallback");
+            options.setUseXNNPACK(true);
+        }
+
         mInterpreter = new Interpreter(tfliteModel, options);
-        Log.d("WhisperEngine", "XNNPACK enabled: " + options.getUseXNNPACK());
     }
 
     private float[] getMelSpectrogram(String wavePath) {

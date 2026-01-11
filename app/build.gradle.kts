@@ -11,8 +11,8 @@ android {
         applicationId = "com.t4paN.AVA"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -51,8 +51,6 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     implementation(project(":whisper_native"))
     implementation("com.github.wendykierp:JTransforms:3.1")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4")
     implementation("com.github.gkonovalov.android-vad:silero:2.0.10")
     implementation("androidx.media3:media3-exoplayer:1.2.1")
     implementation("androidx.media3:media3-common:1.2.1")
