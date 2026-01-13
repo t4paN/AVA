@@ -206,6 +206,12 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    private fun restartWhisperEngine() {
+        // Tell RecordingService to reinitialize Whisper with new model
+        val intent = Intent(this, RecordingService::class.java)
+        intent.action = "RELOAD_WHISPER"
+        startService(intent)
+    }
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.menu_main, menu)
         return true
@@ -219,6 +225,12 @@ class MainActivity : AppCompatActivity() {
         val unlockItem = menu.findItem(R.id.action_toggle_unlock)
         unlockItem.title = if (unlockEnabled) "Start on unlock: ON" else "Start on unlock: OFF"
         unlockItem.isChecked = unlockEnabled
+
+        // Update "Fast mode" menu item
+        val fastModeEnabled = ModelManager.isFastModeEnabled(this)
+        val fastModeItem = menu.findItem(R.id.action_toggle_fastmode)
+        fastModeItem.title = if (fastModeEnabled) "Fast mode: ON" else "Fast mode: OFF"
+        fastModeItem.isChecked = fastModeEnabled
 
         // Update "Auto-call" menu item
         val autoCallEnabled = prefs.getBoolean("auto_call_enabled", true)
@@ -242,6 +254,41 @@ class MainActivity : AppCompatActivity() {
                     Snackbar.LENGTH_SHORT).show()
                 true
             }
+            R.id.action_toggle_fastmode -> {
+                val currentlyEnabled = ModelManager.isFastModeEnabled(this)
+
+                if (currentlyEnabled) {
+                    // Turning OFF fast mode - need to download small model if not present
+                    if (ModelManager.isSmallModelDownloaded(this)) {
+                        // Already downloaded, just toggle
+                        ModelManager.setFastModeEnabled(this, false)
+                        invalidateOptionsMenu()
+                        Snackbar.make(binding.root, "Accurate mode enabled", Snackbar.LENGTH_SHORT).show()
+                        restartWhisperEngine()
+                    } else {
+                        // Need to download
+                        ModelManager.downloadSmallModel(this,
+                            onComplete = {
+                                ModelManager.setFastModeEnabled(this, false)
+                                invalidateOptionsMenu()
+                                Snackbar.make(binding.root, "Model downloaded! Restarting...", Snackbar.LENGTH_SHORT).show()
+                                restartWhisperEngine()
+                            },
+                            onError = { error ->
+                                Snackbar.make(binding.root, "Download failed: $error", Snackbar.LENGTH_LONG).show()
+                            }
+                        )
+                    }
+                } else {
+                    // Turning ON fast mode - just toggle, no download needed
+                    ModelManager.setFastModeEnabled(this, true)
+                    invalidateOptionsMenu()
+                    Snackbar.make(binding.root, "Fast mode enabled", Snackbar.LENGTH_SHORT).show()
+                    restartWhisperEngine()
+                }
+                true
+            }
+
             R.id.action_toggle_autocall -> {
                 val prefs = getSharedPreferences("ava_settings", MODE_PRIVATE)
                 val currentlyEnabled = prefs.getBoolean("auto_call_enabled", true)

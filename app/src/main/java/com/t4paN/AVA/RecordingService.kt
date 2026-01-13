@@ -393,25 +393,13 @@ class RecordingService : Service() {
 
             Log.d(TAG, "First-time Whisper initialization...")
             try {
-                Log.d(TAG, "Copying model from assets...")
+                val modelPath = ModelManager.getModelPath(this)
+                val vocabPath = ModelManager.getVocabPath(this)
 
-                val modelPath = File(filesDir, "whisper-base.TOP_WORLD.tflite").absolutePath
-                assets.open("whisper-base.TOP_WORLD.tflite").use { input ->
-                    FileOutputStream(modelPath).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-
-                Log.d(TAG, "Copying filters_vocab from assets...")
-                val filtersVocabPath = File(filesDir, "filters_vocab_multilingual.bin").absolutePath
-                assets.open("filters_vocab_multilingual.bin").use { input ->
-                    FileOutputStream(filtersVocabPath).use { output ->
-                        input.copyTo(output)
-                    }
-                }
+                Log.d(TAG, "Using model: $modelPath")
 
                 val engine = WhisperEngineJava(this)
-                engine.initialize(modelPath, filtersVocabPath, true)
+                engine.initialize(modelPath, vocabPath, true)
 
                 sharedWhisperEngine = engine
                 Log.d(TAG, "Whisper initialized and cached")
@@ -420,7 +408,6 @@ class RecordingService : Service() {
             }
         }
     }
-
     private fun prepareRecorder() {
         if (isRecording || isCancelled) return
 
@@ -1115,6 +1102,13 @@ class RecordingService : Service() {
 
         if (intent?.action == "PRELOAD_WHISPER") {
             Log.d(TAG, "Preloading Whisper...")
+            initializeWhisperIfNeeded()
+            return START_STICKY
+        }
+
+        if (intent?.action == "RELOAD_WHISPER") {
+            Log.d(TAG, "Reloading Whisper with new model...")
+            resetWhisperEngine()
             initializeWhisperIfNeeded()
             return START_STICKY
         }
