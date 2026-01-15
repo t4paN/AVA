@@ -6,7 +6,44 @@
     <string name="second_fragment_label">Settings</string>
     <string name="next">Next</string>
     <string name="previous">Previous</string>
+    <!-- Accessibility Service -->
+    <string name="accessibility_service_description">Επιτρέπει στην AVA να πατάει αυτόματα το κουμπί κλήσης σε εφαρμογές όπως το Viber, για χρήστες με προβλήματα όρασης. Δεν διαβάζει και δεν αποθηκεύει περιεχόμενο οθόνης.</string>
+    <string name="accessibility_service_summary">Αυτόματο πάτημα κουμπιού κλήσης</string>
 
+    <!-- VoIP Calibration Activity -->
+    <string name="voip_calibration_title">Ρύθμιση VoIP</string>
+    <string name="voip_calibration_select_app">Επιλέξτε εφαρμογή</string>
+    <string name="voip_calibration_launch_app">Άνοιγμα εφαρμογής</string>
+    <string name="voip_calibration_take_screenshot">Λήψη στιγμιότυπου</string>
+    <string name="voip_calibration_tap_instruction">Πατήστε στο κουμπί κλήσης</string>
+    <string name="voip_calibration_wait_time">Αναμονή (δευτερόλεπτα)</string>
+    <string name="voip_calibration_save">Αποθήκευση</string>
+    <string name="voip_calibration_cancel">Ακύρωση</string>
+    <string name="voip_calibration_retake">Νέα λήψη</string>
+    <string name="voip_calibration_success">Η ρύθμιση αποθηκεύτηκε</string>
+    <string name="voip_calibration_no_apps">Δεν βρέθηκαν συμβατές εφαρμογές</string>
+    <string name="voip_calibration_configured">Ρυθμισμένο</string>
+    <string name="voip_calibration_not_configured">Μη ρυθμισμένο</string>
+    <string name="voip_calibration_reconfigure">Επαναρύθμιση;</string>
+
+    <!-- VoIP Settings -->
+    <string name="voip_settings_title">Ρυθμίσεις VoIP κλήσεων</string>
+    <string name="voip_settings_auto_click">Αυτόματο κλικ</string>
+    <string name="voip_settings_auto_click_desc">Πατάει αυτόματα το κουμπί κλήσης</string>
+    <string name="voip_settings_haptic_guide">Οδηγός με δόνηση</string>
+    <string name="voip_settings_haptic_guide_desc">Δείχνει το κουμπί και καθοδηγεί με δόνηση</string>
+    <string name="voip_settings_enable_service">Ενεργοποίηση υπηρεσίας</string>
+    <string name="voip_settings_service_status">Κατάσταση υπηρεσίας</string>
+
+    <!-- VoIP Errors/Feedback -->
+    <string name="voip_error_app_not_opened">Η εφαρμογή δεν άνοιξε εγκαίρως</string>
+    <string name="voip_error_click_failed">Δεν μπόρεσα να πατήσω το κουμπί</string>
+    <string name="voip_error_service_disabled">Η υπηρεσία προσβασιμότητας δεν είναι ενεργή</string>
+    <string name="voip_error_unknown_app">Άγνωστη εφαρμογή</string>
+
+    <!-- Screenshot Overlay -->
+    <string name="screenshot_overlay_capture">Λήψη</string>
+    <string name="screenshot_overlay_cancel">Ακύρωση</string>
     <string name="lorem_ipsum">
         Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nam in scelerisque sem. Mauris
         volutpat, dolor id interdum ullamcorper, risus dolor egestas lectus, sit amet mattis purus

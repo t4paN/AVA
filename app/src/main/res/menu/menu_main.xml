@@ -33,4 +33,10 @@
         android:title="Σταθμοί ραδιοφώνου"
         app:showAsAction="never" />
 
+    <item
+        android:id="@+id/action_voip_calibration"
+        android:orderInCategory="150"
+        android:title="VoIP Ρυθμίσεις"
+        app:showAsAction="never" />
+
 </menu>

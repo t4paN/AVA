@@ -23,19 +23,14 @@ import kotlin.math.hypot
 /**
  * HapticGuideManager - Visual + haptic guide for blind/low-vision users
  * 
- * Shows pulsing purple dot over app buttons (e.g., Viber's "Free Call").
+ * Shows pulsing green dot over app buttons (e.g., Viber's "Free Call").
  * Haptic feedback intensifies as finger approaches target.
  * 
- * Positions are hardcoded defaults + caregiver x/y adjustments via prefs.
+ * UPDATED: Now reads position from VoIPAppRegistry (shared with VoIPAutoClickManager).
+ * Caregiver calibrates once via VoIPCalibrationActivity, both systems use same data.
  */
 object HapticGuideManager {
     private const val TAG = "HapticGuideManager"
-    private const val PREFS_NAME = "ava_haptic_guide"
-    
-    // Hardcoded defaults (x%, y%) - measured from real devices
-    private val defaults = mapOf(
-        "com.viber.voip" to Pair(0.75f, 0.08f)
-    )
     
     // Visual
     private const val DOT_RADIUS_DP = 25f
@@ -63,9 +58,6 @@ object HapticGuideManager {
     private const val AMP_CLOSE = 120
     private const val AMP_TARGET = 255
     
-    // Adjustment step for caregiver controls
-    const val ADJUST_STEP = 0.03f
-    
     private var windowManager: WindowManager? = null
     private var vibrator: Vibrator? = null
     private var overlayView: GuideOverlayView? = null
@@ -88,12 +80,14 @@ object HapticGuideManager {
             return
         }
         
-        val (x, y) = getPosition(context, packageName)
-        if (x < 0) {
-            Log.w(TAG, "No position for $packageName")
+        // Get position from shared VoIPAppRegistry
+        val position = VoIPAppRegistry.getClickPosition(context, packageName)
+        if (position == null) {
+            Log.w(TAG, "No calibrated position for $packageName")
             return
         }
         
+        val (x, y) = position
         Log.i(TAG, "Starting guide for $packageName at ($x, $y)")
         
         windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -149,39 +143,11 @@ object HapticGuideManager {
         overlayView = null
     }
     
-    fun hasPosition(packageName: String) = defaults.containsKey(packageName)
-    
-    fun getPosition(context: Context, packageName: String): Pair<Float, Float> {
-        val default = defaults[packageName] ?: return Pair(-1f, -1f)
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val dx = prefs.getFloat("${packageName}_dx", 0f)
-        val dy = prefs.getFloat("${packageName}_dy", 0f)
-        return Pair(
-            (default.first + dx).coerceIn(0f, 1f),
-            (default.second + dy).coerceIn(0f, 1f)
-        )
-    }
-    
-    fun adjustX(context: Context, packageName: String, delta: Float) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val current = prefs.getFloat("${packageName}_dx", 0f)
-        prefs.edit().putFloat("${packageName}_dx", current + delta).apply()
-        Log.d(TAG, "$packageName dx now ${current + delta}")
-    }
-    
-    fun adjustY(context: Context, packageName: String, delta: Float) {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val current = prefs.getFloat("${packageName}_dy", 0f)
-        prefs.edit().putFloat("${packageName}_dy", current + delta).apply()
-        Log.d(TAG, "$packageName dy now ${current + delta}")
-    }
-    
-    fun resetAdjustments(context: Context, packageName: String) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .remove("${packageName}_dx")
-            .remove("${packageName}_dy")
-            .apply()
+    /**
+     * Check if we have a calibrated position for this app.
+     */
+    fun hasPosition(context: Context, packageName: String): Boolean {
+        return VoIPAppRegistry.getClickPosition(context, packageName) != null
     }
     
     // ==================== HAPTICS ====================

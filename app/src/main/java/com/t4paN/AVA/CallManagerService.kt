@@ -39,6 +39,9 @@ import androidx.core.widget.TextViewCompat
 
 /**
  * CallManagerService - Owns the entire post-match call flow
+ * 
+ * UPDATED: VoIP calling logic extracted to VoIPManager.
+ * This service now delegates VoIP calls instead of handling them directly.
  */
 class CallManagerService : Service() {
 
@@ -72,6 +75,11 @@ class CallManagerService : Service() {
         private const val COLOR_ORANGE = 0xFFFF8C00.toInt()
         private const val COLOR_BLUE = 0xFF4169E1.toInt()
         private const val COLOR_GREEN = 0xFF00AA00.toInt()
+        
+        // VoIP package names for routing detection
+        private const val VIBER_PACKAGE = "com.viber.voip"
+        private const val WHATSAPP_PACKAGE = "com.whatsapp"
+        private const val SIGNAL_PACKAGE = "org.thoughtcrime.securesms"
     }
 
     // State
@@ -306,23 +314,74 @@ class CallManagerService : Service() {
         }
     }
 
+    // ==================== CALL PLACEMENT ====================
+
     private fun placeCall() {
         val number = pendingNumber ?: return
         val routing = pendingRouting ?: ""
-
         Log.i(TAG, "Placing call to $number with routing '$routing'")
-
         vibrateShort()
 
-        when {
-            routing.contains("VIBER", ignoreCase = true) -> placeViberCall(number)
-            routing.contains("WHATSAPP", ignoreCase = true) -> placeWhatsAppCall(number)
-            else -> placeRegularCall(number)
+        // Determine package name from routing
+        val voipPackage = when {
+            routing.contains("VIBER", ignoreCase = true) -> VIBER_PACKAGE
+            routing.contains("WHATSAPP", ignoreCase = true) -> WHATSAPP_PACKAGE
+            routing.contains("SIGNAL", ignoreCase = true) -> SIGNAL_PACKAGE
+            else -> null
         }
 
-        handler.postDelayed({
-            cleanup()
-        }, 800)
+        if (voipPackage != null) {
+            // Delegate to VoIPManager - it handles its own timing
+            placeVoIPCall(voipPackage, number)
+        } else {
+            // Regular phone call
+            placeRegularCall(number)
+            handler.postDelayed({
+                cleanup()
+            }, 800)
+        }
+    }
+    /**
+     * Place a VoIP call via VoIPManager.
+     * Handles auto-click vs haptic guide based on settings and calibration.
+     */
+    private fun placeVoIPCall(packageName: String, number: String) {
+        Log.d(TAG, "Delegating VoIP call to VoIPManager: $packageName -> $number")
+
+        // Check if app is available
+        if (!VoIPManager.isAppAvailable(this, packageName)) {
+            val appName = when (packageName) {
+                VIBER_PACKAGE -> "Viber"
+                WHATSAPP_PACKAGE -> "WhatsApp"
+                SIGNAL_PACKAGE -> "Signal"
+                else -> "Η εφαρμογή"
+            }
+            Log.w(TAG, "$appName not installed, falling back to regular call")
+            speakError("$appName δεν είναι εγκατεστημένο")
+            placeRegularCall(number)
+            return
+        }
+
+        // Hide overlay before launching VoIP app
+        hideCancelOverlay()
+
+        VoIPManager.placeCall(
+            context = this,
+            packageName = packageName,
+            phoneNumber = number,
+            onSuccess = {
+                Log.i(TAG, "VoIP call initiated successfully")
+                // Just stop the service quietly - don't cancel polling
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            },
+            onFailure = { errorMessage ->
+                Log.w(TAG, "VoIP call failed: $errorMessage")
+                playErrorFeedback()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        )
     }
 
     private fun placeRegularCall(number: String) {
@@ -349,71 +408,12 @@ class CallManagerService : Service() {
         }
     }
 
-    private fun placeViberCall(number: String) {
-        Log.d(TAG, "Placing Viber call to $number")
-
-        try {
-            val uri = Uri.parse("viber://chat?number=${sanitizeNumber(number)}")
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage("com.viber.voip")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-
-            if (packageManager.getLaunchIntentForPackage("com.viber.voip") != null) {
-                startActivity(intent)
-
-                // Show haptic guide after Viber opens
-                handler.postDelayed({
-                    HapticGuideManager.start(
-                        context = this,
-                        packageName = "com.viber.voip",
-                        onTapped = {
-                            Log.i(TAG, "User tapped Viber call button")
-                            handler.postDelayed({
-                                HapticGuideManager.stop()
-                            }, 2000)
-                        },
-
-                        onCancelled = {
-                            Log.i(TAG, "User cancelled Viber guide")
-                            HapticGuideManager.stop()
-                        }
-                    )
-                }, 800)  // Let Viber load first
-
-            } else {
-                Log.w(TAG, "Viber not installed, falling back to regular call")
-                speakError("Το Viber δεν είναι εγκατεστημένο")
-                placeRegularCall(number)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error placing Viber call", e)
-            placeRegularCall(number)
-        }
-    }
-
-    private fun placeWhatsAppCall(number: String) {
-        Log.d(TAG, "Placing WhatsApp call to $number")
-
-        try {
-            val intlNumber = formatForWhatsApp(number)
-            val uri = Uri.parse("https://wa.me/$intlNumber?voice_call=1")
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage("com.whatsapp")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-
-            if (packageManager.getLaunchIntentForPackage("com.whatsapp") != null) {
-                startActivity(intent)
-            } else {
-                Log.w(TAG, "WhatsApp not installed, falling back to regular call")
-                speakError("Το WhatsApp δεν είναι εγκατεστημένο")
-                placeRegularCall(number)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error placing WhatsApp call", e)
-            placeRegularCall(number)
-        }
+    /**
+     * Play error feedback (same as "δεν βρέθηκε επαφή" pattern).
+     */
+    private fun playErrorFeedback() {
+        vibrateShort()
+        playBeep()
     }
 
     // ==================== AMBIGUOUS MATCH FLOW ====================
@@ -449,34 +449,30 @@ class CallManagerService : Service() {
     private fun onSelectionMade(index: Int) {
         Log.i(TAG, "Selection made: index=$index")
 
-        val names = ambiguousNames ?: return
-        val numbers = ambiguousNumbers ?: return
-        val routings = ambiguousRoutings ?: emptyList()
-
-        if (index >= names.size) return
-
         vibrateShort()
 
-        // Hide selection overlay
-        hideSelectionOverlay()
+        val name = ambiguousNames?.getOrNull(index)
+        val number = ambiguousNumbers?.getOrNull(index)
+        val routing = ambiguousRoutings?.getOrNull(index) ?: ""
 
-        // Set up the selected contact
-        pendingName = names[index]
-        pendingNumber = numbers[index]
-        pendingRouting = routings.getOrNull(index) ?: ""
+        if (name != null && number != null) {
+            TtsManager.stop()
+            hideSelectionOverlay()
 
-        // Show cancel overlay with selected name
-        showCancelOverlay(pendingName!!)
+            pendingName = name
+            pendingNumber = number
+            pendingRouting = routing
 
-        // Announce and proceed to call
-        currentPhase = CallPhase.ANNOUNCING
-        handler.postDelayed({
-            TtsManager.setSpeechRate(TTS_RATE_NORMAL)
-            announceCall(pendingName!!)
-        }, 300)
+            currentPhase = CallPhase.ANNOUNCING
+            announceCall(name)
+            showCancelOverlay(name)
+        } else {
+            Log.e(TAG, "Invalid selection index: $index")
+            cleanup()
+        }
     }
 
-    // ==================== SELECTION OVERLAY (Orange/Blue boxes above, Cancel below) ====================
+    // ==================== SELECTION OVERLAY ====================
 
     private fun showSelectionOverlay(name1: String, name2: String) {
         if (selectionOverlay != null) {
@@ -491,25 +487,53 @@ class CallManagerService : Service() {
         val screenWidth = displayMetrics.widthPixels
         val density = displayMetrics.density
 
-        // Smaller side margins, bigger gap between boxes
-        val sideMarginPx = (12 * density).toInt()
-        val boxGapPx = (20 * density).toInt()
-        val bottomMarginPx = (24 * density).toInt()
+        val marginPx = (24 * density).toInt()
+        val gapPx = (16 * density).toInt()
         val cornerRadiusPx = (24 * density)
 
-        // Heights
-        val cancelHeight = (screenHeight * 0.40).toInt()
-        val selectionHeight = (screenHeight * 0.45).toInt()
-        val gapBetweenSections = (16 * density).toInt()
+        // Calculate sizes: 2 colored boxes at top, cancel zone at bottom
+        val cancelHeight = screenHeight / 4
+        val availableHeight = screenHeight - cancelHeight - (marginPx * 2) - gapPx
+        val boxHeight = availableHeight / 2
 
-        val totalWidth = screenWidth - (sideMarginPx * 2)
-        val boxWidth = (totalWidth - boxGapPx) / 2
+        val mainContainer = FrameLayout(this)
 
-        // === CANCEL BUTTON (bottom) ===
-        val cancelButton = FrameLayout(this).apply {
+        // Box 1 (top) - Orange
+        val box1 = createSelectionBox(name1, COLOR_ORANGE, cornerRadiusPx) {
+            onSelectionMade(0)
+        }
+        val box1Params = FrameLayout.LayoutParams(
+            screenWidth - (marginPx * 2),
+            boxHeight
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            topMargin = marginPx
+        }
+        mainContainer.addView(box1, box1Params)
+
+        // Box 2 (middle) - Blue
+        val box2 = createSelectionBox(name2, COLOR_BLUE, cornerRadiusPx) {
+            onSelectionMade(1)
+        }
+        val box2Params = FrameLayout.LayoutParams(
+            screenWidth - (marginPx * 2),
+            boxHeight
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            topMargin = marginPx + boxHeight + gapPx
+        }
+        mainContainer.addView(box2, box2Params)
+
+        // Cancel zone (bottom)
+        val cancelZone = FrameLayout(this).apply {
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(COLOR_RED)
-                cornerRadius = cornerRadiusPx
+                cornerRadii = floatArrayOf(
+                    cornerRadiusPx, cornerRadiusPx,  // top-left
+                    cornerRadiusPx, cornerRadiusPx,  // top-right
+                    0f, 0f,                          // bottom-right
+                    0f, 0f                           // bottom-left
+                )
             }
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_DOWN) {
@@ -520,123 +544,83 @@ class CallManagerService : Service() {
         }
 
         val cancelText = TextView(this).apply {
-            text = "ΑΚΥΡΩΣΗ"
+            text = "ΑΚΥΡΟ"
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 48f)
-        }
-        cancelButton.addView(cancelText, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-
-        // === SELECTION CONTAINER (above cancel) ===
-        val selectionContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
-
-        // Left box (Orange)
-        val leftBox = FrameLayout(this).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(COLOR_ORANGE)
-                cornerRadius = cornerRadiusPx
-            }
-            setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    onSelectionMade(0)
-                }
-                true
-            }
-        }
-
-        val leftText = TextView(this).apply {
-            text = formatNameForButton(name1)
-            setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
         }
         TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
-            leftText, 16, 48, 2, TypedValue.COMPLEX_UNIT_SP
+            cancelText, 24, 48, 2, android.util.TypedValue.COMPLEX_UNIT_SP
         )
-        leftBox.addView(leftText, FrameLayout.LayoutParams(
+        cancelZone.addView(cancelText, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // Right box (Blue)
-        val rightBox = FrameLayout(this).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(COLOR_BLUE)
-                cornerRadius = cornerRadiusPx
-            }
-            setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    onSelectionMade(1)
-                }
-                true
-            }
-        }
-
-        val rightText = TextView(this).apply {
-            text = formatNameForButton(name2)
-            setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
-        }
-        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
-            rightText, 16, 48, 2, TypedValue.COMPLEX_UNIT_SP
-        )
-        rightBox.addView(rightText, FrameLayout.LayoutParams(
+        val cancelParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-
-        // Add boxes to selection container
-        val leftParams = LinearLayout.LayoutParams(boxWidth, LinearLayout.LayoutParams.MATCH_PARENT)
-        leftParams.marginEnd = boxGapPx / 2
-        selectionContainer.addView(leftBox, leftParams)
-
-        val rightParams = LinearLayout.LayoutParams(boxWidth, LinearLayout.LayoutParams.MATCH_PARENT)
-        rightParams.marginStart = boxGapPx / 2
-        selectionContainer.addView(rightBox, rightParams)
-
-        // === MAIN CONTAINER ===
-        val mainContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            cancelHeight
+        ).apply {
+            gravity = Gravity.BOTTOM
         }
-
-        val selectionParams = LinearLayout.LayoutParams(totalWidth, selectionHeight)
-        selectionParams.bottomMargin = gapBetweenSections
-        mainContainer.addView(selectionContainer, selectionParams)
-
-        val cancelParams = LinearLayout.LayoutParams(totalWidth, cancelHeight)
-        mainContainer.addView(cancelButton, cancelParams)
+        mainContainer.addView(cancelZone, cancelParams)
 
         selectionOverlay = mainContainer
 
         val params = WindowManager.LayoutParams(
-            screenWidth,
-            selectionHeight + cancelHeight + gapBetweenSections + bottomMarginPx,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = bottomMarginPx
-            x = 0
-        }
+        )
 
         try {
             windowManager?.addView(selectionOverlay, params)
             Log.d(TAG, "Selection overlay added successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add selection overlay", e)
+        }
+    }
+
+    private fun createSelectionBox(
+        name: String,
+        color: Int,
+        cornerRadius: Float,
+        onClick: () -> Unit
+    ): FrameLayout {
+        return FrameLayout(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(color)
+                this.cornerRadius = cornerRadius
+            }
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    onClick()
+                }
+                true
+            }
+
+            val nameText = TextView(context).apply {
+                text = formatNameForButton(stripRoutingSuffix(name))
+                setTextColor(Color.WHITE)
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setPadding(
+                    (16 * resources.displayMetrics.density).toInt(),
+                    (16 * resources.displayMetrics.density).toInt(),
+                    (16 * resources.displayMetrics.density).toInt(),
+                    (16 * resources.displayMetrics.density).toInt()
+                )
+            }
+            TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+                nameText, 24, 72, 2, TypedValue.COMPLEX_UNIT_SP
+            )
+            addView(nameText, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            ))
         }
     }
 
@@ -652,7 +636,7 @@ class CallManagerService : Service() {
         selectionOverlay = null
     }
 
-    // ==================== CALL CONFIRMATION OVERLAY (Green call + Red cancel) ====================
+    // ==================== CALL CONFIRMATION OVERLAY ====================
 
     private fun showCallConfirmationOverlay() {
         if (overlayView != null) {
@@ -672,17 +656,17 @@ class CallManagerService : Service() {
         val gapPx = (16 * density).toInt()
         val cornerRadiusPx = (24 * density)
 
-        // Calculate heights
-        val greenHeight = (screenHeight * 0.50).toInt()
-        val redHeight = (screenHeight * 0.35).toInt()
+        // Green button takes 60% of available height, red button takes 40%
+        val totalHeight = (screenHeight * 0.6).toInt()
+        val greenHeight = (totalHeight * 0.6).toInt()
+        val redHeight = (totalHeight * 0.4).toInt()
 
-        // Main container
         val mainContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         }
 
-        // GREEN CALL BUTTON (top)
+        // Green call button
         val greenButton = FrameLayout(this).apply {
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(COLOR_GREEN)
@@ -696,7 +680,7 @@ class CallManagerService : Service() {
             }
         }
 
-        val nameText = TextView(this).apply {
+        val greenText = TextView(this).apply {
             text = formatNameForButton(stripRoutingSuffix(name))
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
@@ -704,14 +688,22 @@ class CallManagerService : Service() {
             setPadding((16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt())
         }
         TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
-            nameText, 24, 72, 2, TypedValue.COMPLEX_UNIT_SP
+            greenText, 24, 72, 2, TypedValue.COMPLEX_UNIT_SP
         )
-        greenButton.addView(nameText, FrameLayout.LayoutParams(
+        greenButton.addView(greenText, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // RED CANCEL BUTTON (bottom)
+        val greenParams = LinearLayout.LayoutParams(
+            screenWidth - (marginPx * 2),
+            greenHeight
+        ).apply {
+            bottomMargin = gapPx
+        }
+        mainContainer.addView(greenButton, greenParams)
+
+        // Red cancel button
         val redButton = FrameLayout(this).apply {
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(COLOR_RED)
@@ -725,24 +717,24 @@ class CallManagerService : Service() {
             }
         }
 
-        val cancelText = TextView(this).apply {
-            text = "ΑΚΥΡΩΣΗ"
+        val redText = TextView(this).apply {
+            text = "ΑΚΥΡΟ"
             setTextColor(Color.WHITE)
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 42f)
         }
-        redButton.addView(cancelText, FrameLayout.LayoutParams(
+        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+            redText, 24, 48, 2, TypedValue.COMPLEX_UNIT_SP
+        )
+        redButton.addView(redText, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // Add buttons to container
-        val greenParams = LinearLayout.LayoutParams(screenWidth - (marginPx * 2), greenHeight)
-        greenParams.bottomMargin = gapPx
-        mainContainer.addView(greenButton, greenParams)
-
-        val redParams = LinearLayout.LayoutParams(screenWidth - (marginPx * 2), redHeight)
+        val redParams = LinearLayout.LayoutParams(
+            screenWidth - (marginPx * 2),
+            redHeight
+        )
         mainContainer.addView(redButton, redParams)
 
         overlayView = mainContainer
@@ -932,20 +924,6 @@ class CallManagerService : Service() {
         return number.replace(Regex("[\\s\\-().]"), "")
     }
 
-    private fun formatForWhatsApp(number: String): String {
-        var clean = sanitizeNumber(number)
-
-        if (clean.startsWith("+")) {
-            clean = clean.substring(1)
-        }
-
-        if (clean.startsWith("69") && clean.length == 10) {
-            clean = "30$clean"
-        }
-
-        return clean
-    }
-
     private fun vibrateShort() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -978,6 +956,9 @@ class CallManagerService : Service() {
 
         hideCancelOverlay()
         hideSelectionOverlay()
+
+        // Cancel any VoIP polling
+        VoIPManager.cancelPolling()
 
         TtsManager.stop()
         TtsManager.setSpeechRate(TTS_RATE_NORMAL)

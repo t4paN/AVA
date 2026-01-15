@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- accessibility_service_config.xml -->
+<!--
+    Configuration for AVAAccessibilityService
+    
+    MINIMAL PERMISSIONS:
+    - canRetrieveWindowContent="false" - we don't read screen content
+    - canPerformGestures="true" - we only perform click gestures
+    - isAccessibilityTool="true" - legitimate accessibility purpose
+    
+    This service is PASSIVE - it does nothing unless explicitly
+    commanded by VoIPAutoClickManager during a call flow.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/accessibility_service_description"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="100"
+    android:canRetrieveWindowContent="false"
+    android:canPerformGestures="true"
+    android:isAccessibilityTool="true"
+    android:settingsActivity="com.t4paN.AVA.VoIPCalibrationActivity" />

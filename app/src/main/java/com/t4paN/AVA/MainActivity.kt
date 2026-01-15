@@ -289,6 +289,11 @@ class MainActivity : AppCompatActivity() {
                 true
             }
 
+            R.id.action_voip_calibration -> {
+                startActivity(Intent(this, VoIPCalibrationActivity::class.java))
+                true
+            }
+
             R.id.action_toggle_autocall -> {
                 val prefs = getSharedPreferences("ava_settings", MODE_PRIVATE)
                 val currentlyEnabled = prefs.getBoolean("auto_call_enabled", true)
