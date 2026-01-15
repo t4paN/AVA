@@ -491,36 +491,40 @@ class CallManagerService : Service() {
         val gapPx = (16 * density).toInt()
         val cornerRadiusPx = (24 * density)
 
-        // Calculate sizes: 2 colored boxes at top, cancel zone at bottom
+        // Layout: Two boxes side-by-side at top, cancel zone at bottom
         val cancelHeight = screenHeight / 4
-        val availableHeight = screenHeight - cancelHeight - (marginPx * 2) - gapPx
-        val boxHeight = availableHeight / 2
+        val boxesHeight = screenHeight - cancelHeight - (marginPx * 2) - gapPx
+        val boxWidth = (screenWidth - (marginPx * 2) - gapPx) / 2
 
-        val mainContainer = FrameLayout(this)
+        val mainContainer = FrameLayout(this).apply{
+            setBackgroundColor(0xFF000000.toInt())
+        }
 
-        // Box 1 (top) - Orange
+        // Box 1 (LEFT) - Orange
         val box1 = createSelectionBox(name1, COLOR_ORANGE, cornerRadiusPx) {
             onSelectionMade(0)
         }
         val box1Params = FrameLayout.LayoutParams(
-            screenWidth - (marginPx * 2),
-            boxHeight
+            boxWidth,
+            boxesHeight
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            gravity = Gravity.TOP or Gravity.START
             topMargin = marginPx
+            leftMargin = marginPx
         }
         mainContainer.addView(box1, box1Params)
 
-        // Box 2 (middle) - Blue
+        // Box 2 (RIGHT) - Blue
         val box2 = createSelectionBox(name2, COLOR_BLUE, cornerRadiusPx) {
             onSelectionMade(1)
         }
         val box2Params = FrameLayout.LayoutParams(
-            screenWidth - (marginPx * 2),
-            boxHeight
+            boxWidth,
+            boxesHeight
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            topMargin = marginPx + boxHeight + gapPx
+            gravity = Gravity.TOP or Gravity.END
+            topMargin = marginPx
+            rightMargin = marginPx
         }
         mainContainer.addView(box2, box2Params)
 
@@ -583,7 +587,6 @@ class CallManagerService : Service() {
             Log.e(TAG, "Failed to add selection overlay", e)
         }
     }
-
     private fun createSelectionBox(
         name: String,
         color: Int,
@@ -657,13 +660,14 @@ class CallManagerService : Service() {
         val cornerRadiusPx = (24 * density)
 
         // Green button takes 60% of available height, red button takes 40%
-        val totalHeight = (screenHeight * 0.6).toInt()
-        val greenHeight = (totalHeight * 0.6).toInt()
-        val redHeight = (totalHeight * 0.4).toInt()
+        val totalHeight = (screenHeight * 0.8).toInt()
+        val greenHeight = (totalHeight * 0.58).toInt()
+        val redHeight = (totalHeight * 0.42).toInt()
 
         val mainContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            setBackgroundColor(0xFF000000.toInt())
         }
 
         // Green call button
@@ -789,6 +793,10 @@ class CallManagerService : Service() {
 
         val marginPx = (24 * density).toInt()
         val cornerRadiusPx = (24 * density)
+        // Full screen black container
+        val fullContainer = FrameLayout(this).apply {
+            setBackgroundColor(0xFF000000.toInt())
+        }
 
         val container = FrameLayout(this).apply {
             background = android.graphics.drawable.GradientDrawable().apply {
@@ -819,19 +827,23 @@ class CallManagerService : Service() {
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        overlayView = container
+        fullContainer.addView(container, FrameLayout.LayoutParams(
+            screenWidth - (marginPx * 2),
+            (screenHeight / 2) - marginPx
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            bottomMargin = marginPx
+        })
+        overlayView = fullContainer
 
         val params = WindowManager.LayoutParams(
-            screenWidth - (marginPx * 2),
-            (screenHeight / 2) - marginPx,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = marginPx
-        }
+        )
 
         try {
             windowManager?.addView(overlayView, params)

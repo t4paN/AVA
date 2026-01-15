@@ -12,13 +12,10 @@ import android.util.Log
 /**
  * VoIPManager - Handles all VoIP app calling logic
  *
- * Simplified: No foreground detection, just timed launch + click.
- * The calibration wait time controls how long to wait before clicking.
- *
- * Responsibilities:
- * - Launch VoIP apps with appropriate deep links
- * - Handle cold start (two-stage launch)
- * - Execute auto-click after configured delay
+ * Click strategy: AccessibilityService detects Viber screens and triggers clicks.
+ * - ConversationActivity detected → wait 300ms → click
+ * - PhoneFragmentActivity detected → success, stop
+ * - Left Viber → stop
  */
 object VoIPManager {
     private const val TAG = "VoIPManager"
@@ -29,21 +26,21 @@ object VoIPManager {
 
     private val handler = Handler(Looper.getMainLooper())
     private var pendingRunnable: Runnable? = null
+    private var timeoutRunnable: Runnable? = null
+
+    // Current call state (no Context stored - just primitives)
+    private var clickX: Float = 0f
+    private var clickY: Float = 0f
+    private var screenWidth: Int = 0
+    private var screenHeight: Int = 0
+    private var autoClickEnabled: Boolean = false
+    private var isCalibrated: Boolean = false
+    private var successCallback: (() -> Unit)? = null
+    private var failureCallback: ((String) -> Unit)? = null
+    private var isActive = false
 
     /**
      * Place a call via VoIP app.
-     *
-     * Flow:
-     * 1. Get app config (with calibration data)
-     * 2. Launch app (two-stage for reliability)
-     * 3. Wait configured time for UI to settle
-     * 4. Execute auto-click or show haptic guide
-     *
-     * @param context Application context
-     * @param packageName VoIP app package name
-     * @param phoneNumber Phone number to call
-     * @param onSuccess Called when call flow completes successfully
-     * @param onFailure Called on error, with message for TTS
      */
     fun placeCall(
         context: Context,
@@ -62,32 +59,51 @@ object VoIPManager {
 
         Log.i(TAG, "Placing call via ${config.displayName} to $phoneNumber")
 
-        // Always use two-stage launch for reliability
-        twoStageLaunch(context, config, phoneNumber, onSuccess, onFailure)
+        // Capture everything we need from context (no context stored)
+        val displayMetrics = context.resources.displayMetrics
+        screenWidth = displayMetrics.widthPixels
+        screenHeight = displayMetrics.heightPixels
+        autoClickEnabled = isAutoClickEnabled(context)
+
+        // Store config values
+        clickX = config.clickX
+        clickY = config.clickY
+        isCalibrated = config.isCalibrated
+        successCallback = onSuccess
+        failureCallback = onFailure
+        isActive = true
+
+        // Set timeout based on config
+        timeoutRunnable = Runnable {
+            if (isActive) {
+                Log.w(TAG, "Timeout waiting for call screen")
+                val callback = failureCallback
+                cleanup()
+                callback?.invoke("Η κλήση δεν ξεκίνησε εγκαίρως")
+            }
+        }
+        handler.postDelayed(timeoutRunnable!!, config.waitTimeMs + 2000) // Extra buffer
+
+        // Launch the app
+        twoStageLaunch(context, config, phoneNumber)
     }
 
     /**
      * Two-stage launch for reliable app startup.
-     *
-     * Stage 1: Wake up the app with launch intent
-     * Stage 2: After delay, send the actual deep link
-     * Stage 3: After configured wait, execute click
      */
     private fun twoStageLaunch(
         context: Context,
         config: VoIPAppConfig,
-        phoneNumber: String,
-        onSuccess: (() -> Unit)?,
-        onFailure: ((String) -> Unit)?
+        phoneNumber: String
     ) {
-        // Cancel any pending action
         cancelPending()
 
-        // Stage 1: Wake up the app
         val launchIntent = context.packageManager.getLaunchIntentForPackage(config.packageName)
         if (launchIntent == null) {
             Log.e(TAG, "Cannot get launch intent for ${config.packageName}")
-            onFailure?.invoke("Δεν μπόρεσα να ανοίξω την εφαρμογή")
+            val callback = failureCallback
+            cleanup()
+            callback?.invoke("Δεν μπόρεσα να ανοίξω την εφαρμογή")
             return
         }
 
@@ -98,10 +114,7 @@ object VoIPManager {
         // Stage 2: After brief delay, send deep link
         handler.postDelayed({
             launchWithDeepLink(context, config, phoneNumber)
-            
-            // Stage 3: After configured wait, execute action
-            scheduleAction(context, config, onSuccess, onFailure)
-        }, 500) // 500ms for app to initialize
+        }, 500)
     }
 
     /**
@@ -120,7 +133,6 @@ object VoIPManager {
             context.startActivity(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch deep link", e)
-            // Fallback: try without package restriction
             try {
                 val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse(deepLink)).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -132,85 +144,78 @@ object VoIPManager {
         }
     }
 
-    /**
-     * Schedule auto-click or haptic guide after configured delay.
-     */
-    private fun scheduleAction(
-        context: Context,
-        config: VoIPAppConfig,
-        onSuccess: (() -> Unit)?,
-        onFailure: ((String) -> Unit)?
-    ) {
-        val waitTime = config.waitTimeMs
-        Log.d(TAG, "Waiting ${waitTime}ms for ${config.displayName} UI to settle")
+    // ==================== AccessibilityService Callbacks ====================
 
+    /**
+     * Called when Viber chat screen (ConversationActivity) is detected.
+     * Schedule a click after 300ms.
+     */
+    fun onChatScreenDetected() {
+        if (!isActive) return
+        if (!isCalibrated || !autoClickEnabled) return
+
+        Log.d(TAG, "Chat screen detected, scheduling click in 300ms")
+
+        cancelPending()
         pendingRunnable = Runnable {
-            if (isAutoClickEnabled(context) && config.isCalibrated) {
-                executeAutoClick(context, config, onSuccess, onFailure)
-            } else if (config.isCalibrated) {
-                showHapticGuide(context, config, onSuccess)
-            } else {
-                // Not calibrated - just leave user in the app
-                Log.w(TAG, "${config.displayName} not calibrated, no guidance available")
-                onSuccess?.invoke()
+            if (isActive) {
+                executeAutoClick()
             }
         }
+        handler.postDelayed(pendingRunnable!!, 300)
+    }
 
-        handler.postDelayed(pendingRunnable!!, waitTime)
+    /**
+     * Called when Viber call screen (PhoneFragmentActivity) is detected.
+     * Success - stop everything.
+     */
+    fun onCallScreenDetected() {
+        if (!isActive) return
+
+        Log.i(TAG, "Call screen detected - success!")
+        val callback = successCallback
+        cleanup()
+        callback?.invoke()
+    }
+
+    /**
+     * Called when user left Viber (went to home, another app, etc.)
+     */
+    fun onLeftApp() {
+        if (!isActive) return
+
+        Log.d(TAG, "Left Viber - stopping")
+        cleanup()
     }
 
     /**
      * Execute auto-click via AccessibilityService.
+     * Uses stored screen dimensions - no context needed.
      */
-    private fun executeAutoClick(
-        context: Context,
-        config: VoIPAppConfig,
-        onSuccess: (() -> Unit)?,
-        onFailure: ((String) -> Unit)?
-    ) {
-        Log.d(TAG, "Executing auto-click at (${config.clickX}, ${config.clickY})")
+    private fun executeAutoClick() {
+        // Convert relative coordinates to absolute pixels
+        val absoluteX = (clickX * screenWidth).toInt()
+        val absoluteY = (clickY * screenHeight).toInt()
 
-        VoIPAutoClickManager.performClick(
-            context = context,
-            x = config.clickX,
-            y = config.clickY,
-            onSuccess = {
-                Log.i(TAG, "Auto-click successful")
-                onSuccess?.invoke()
-            },
-            onFailure = { reason ->
-                Log.w(TAG, "Auto-click failed: $reason")
-                onFailure?.invoke("Δεν μπόρεσα να πατήσω το κουμπί")
+        Log.d(TAG, "Executing auto-click at ($clickX, $clickY) -> ($absoluteX, $absoluteY)")
+
+        val service = AVAAccessibilityService.instance
+        if (service == null) {
+            Log.e(TAG, "AccessibilityService not available")
+            return
+        }
+
+        service.performClick(absoluteX, absoluteY) { success ->
+            if (success) {
+                Log.i(TAG, "Click dispatched, waiting for screen change...")
+            } else {
+                Log.w(TAG, "Click failed, will retry on next chat screen event")
             }
-        )
+        }
     }
 
     /**
-     * Show haptic guide overlay for manual button finding.
-     */
-    private fun showHapticGuide(
-        context: Context,
-        config: VoIPAppConfig,
-        onSuccess: (() -> Unit)?
-    ) {
-        Log.d(TAG, "Showing haptic guide at (${config.clickX}, ${config.clickY})")
-
-        HapticGuideManager.start(
-            context = context,
-            packageName = config.packageName,
-            onTapped = {
-                Log.i(TAG, "Haptic guide: button tapped")
-                onSuccess?.invoke()
-            },
-            onCancelled = {
-                Log.i(TAG, "Haptic guide: cancelled")
-                HapticGuideManager.forceStop()
-            }
-        )
-    }
-
-    /**
-     * Cancel any pending action.
+     * Cancel pending click.
      */
     fun cancelPending() {
         pendingRunnable?.let {
@@ -219,23 +224,36 @@ object VoIPManager {
         }
     }
 
-    // Keep old name for compatibility with CallManagerService
+    /**
+     * Full cleanup.
+     */
+    private fun cleanup() {
+        isActive = false
+        cancelPending()
+        timeoutRunnable?.let {
+            handler.removeCallbacks(it)
+            timeoutRunnable = null
+        }
+        clickX = 0f
+        clickY = 0f
+        screenWidth = 0
+        screenHeight = 0
+        autoClickEnabled = false
+        isCalibrated = false
+        successCallback = null
+        failureCallback = null
+    }
+
+    // Keep old name for compatibility
     fun cancelPolling() = cancelPending()
 
     // ==================== Settings ====================
 
-    /**
-     * Check if auto-click mode is enabled.
-     * When false, haptic guide is used instead.
-     */
     fun isAutoClickEnabled(context: Context): Boolean {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getBoolean(KEY_AUTO_CLICK_ENABLED, true) // Default to auto-click
+        return prefs.getBoolean(KEY_AUTO_CLICK_ENABLED, true)
     }
 
-    /**
-     * Enable or disable auto-click mode.
-     */
     fun setAutoClickEnabled(context: Context, enabled: Boolean) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putBoolean(KEY_AUTO_CLICK_ENABLED, enabled).apply()
@@ -244,9 +262,6 @@ object VoIPManager {
 
     // ==================== Utility ====================
 
-    /**
-     * Check if a VoIP app is installed and we know how to use it.
-     */
     fun isAppAvailable(context: Context, packageName: String): Boolean {
         return try {
             context.packageManager.getPackageInfo(packageName, 0)
@@ -256,9 +271,6 @@ object VoIPManager {
         }
     }
 
-    /**
-     * Get list of available VoIP apps for calling.
-     */
     fun getAvailableApps(context: Context): List<VoIPAppConfig> {
         return VoIPAppRegistry.getAvailableApps(context)
     }
