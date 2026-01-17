@@ -9,10 +9,10 @@ android {
 
     defaultConfig {
         applicationId = "com.t4paN.AVA"
-        minSdk = 26
+        minSdk = 30
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.2.2"
+        versionCode = 6
+        versionName = "1.2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

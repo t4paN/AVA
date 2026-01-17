@@ -10,9 +10,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.graphics.Color
-import android.graphics.PixelFormat
-import android.graphics.Typeface
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -25,18 +22,9 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
-import android.util.TypedValue
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
-import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.greekvoiceassistant.whisper.engine.WhisperEngine
 import com.greekvoiceassistant.whisper.engine.WhisperEngineJava
-import java.io.File
-import java.io.FileOutputStream
 import org.json.JSONArray
 import org.json.JSONObject
 import android.media.AudioManager
@@ -58,9 +46,7 @@ class RecordingService : Service() {
     // Vibrator for haptic feedback
     private var vibrator: Vibrator? = null
 
-    // Cancel overlay
-    private var windowManager: WindowManager? = null
-    private var cancelOverlay: View? = null
+    // Cancel flag
     private var isCancelled = false
 
     // Timeout runnable as a field so we can cancel it specifically
@@ -96,9 +82,6 @@ class RecordingService : Service() {
 
         // Nuclear reset action
         const val ACTION_NUKE_APP = "NUKE_APP"
-
-        // Colors
-        private const val COLOR_RED = 0xFFCC0000.toInt()
 
         // Store transcription logs for display in FirstFragment
         private val transcriptionLogs = mutableListOf<TranscriptionLog>()
@@ -241,9 +224,6 @@ class RecordingService : Service() {
         isServiceAlive = true
         startSilentNotification()
 
-        // Initialize WindowManager
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-
         // Load persisted logs on startup
         loadPersistedLogs(this)
 
@@ -350,27 +330,10 @@ class RecordingService : Service() {
         Log.d(TAG, "Beep + vibrate before recording...")
 
         // Play beep
-        try {
-            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
-            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
-            handler.postDelayed({
-                toneGen.release()
-            }, 200)
-        } catch (e: Exception) {
-            Log.e(TAG, "Beep error", e)
-        }
+        playBeep()
 
         // Vibrate
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator?.vibrate(100)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Vibration error", e)
-        }
+        vibrateShort()
 
         // Start recording after beep finishes
         handler.postDelayed({
@@ -408,6 +371,7 @@ class RecordingService : Service() {
             }
         }
     }
+
     private fun prepareRecorder() {
         if (isRecording || isCancelled) return
 
@@ -599,7 +563,7 @@ class RecordingService : Service() {
 
                     handler.post {
                         safeToast("No speech detected")
-                        hideCancelOverlay()
+                        CallOverlayController.dismiss()
                     }
                     return@Thread
                 }
@@ -624,7 +588,7 @@ class RecordingService : Service() {
 
                     handler.post {
                         TtsManager.speak("Δεν άκουσα τίποτα", "too_short")
-                        hideCancelOverlay()
+                        CallOverlayController.dismiss()
                     }
                     return@Thread
                 }
@@ -672,7 +636,7 @@ class RecordingService : Service() {
 
                     handler.post {
                         safeToast("Transcription was empty!")
-                        hideCancelOverlay()
+                        CallOverlayController.dismiss()
                     }
                 }
 
@@ -680,13 +644,13 @@ class RecordingService : Service() {
                 Log.e(TAG, "Transcription error", e)
                 handler.post {
                     safeToast("Error: ${e.message}")
-                    hideCancelOverlay()
+                    CallOverlayController.dismiss()
                 }
             } finally {
                 isProcessing = false
                 sessionInProgress = false
                 handler.post {
-                    hideCancelOverlay()
+                    CallOverlayController.dismiss()
                 }
                 Log.d(TAG, "Transcription complete, service staying alive for next recording")
             }
@@ -746,7 +710,7 @@ class RecordingService : Service() {
                 addLogEntry(logEntry)
 
                 handler.post {
-                    hideCancelOverlay()
+                    CallOverlayController.dismiss()
                     RadioActivity.launch(this@RecordingService)
                 }
             }
@@ -934,93 +898,9 @@ class RecordingService : Service() {
     }
 
     /**
-     * Show red cancel button with rounded corners
+     * Handle cancel from overlay - vibrate, beep, stop everything
      */
-    private fun showCancelOverlay() {
-        if (cancelOverlay != null) {
-            Log.w(TAG, "Cancel overlay already showing")
-            return
-        }
-
-        Log.d(TAG, "Showing cancel overlay")
-
-        val displayMetrics = resources.displayMetrics
-        val screenHeight = displayMetrics.heightPixels
-        val screenWidth = displayMetrics.widthPixels
-        val density = displayMetrics.density
-
-        val marginPx = (24 * density).toInt()
-        val cornerRadiusPx = (24 * density)  // Nice rounded corners
-
-        val container = FrameLayout(this).apply {
-            // Create rounded background
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(COLOR_RED)
-                cornerRadius = cornerRadiusPx
-            }
-
-            setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    handleCancelTap()
-                }
-                true
-            }
-        }
-
-        val cancelText = TextView(this).apply {
-            text = "ΑΚΥΡΩΣΗ"
-            setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 48f)
-        }
-
-        container.addView(cancelText, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-
-        cancelOverlay = container
-
-        val params = WindowManager.LayoutParams(
-            screenWidth - (marginPx * 2),
-            (screenHeight / 2) - marginPx,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = marginPx
-        }
-
-        try {
-            windowManager?.addView(cancelOverlay, params)
-            Log.d(TAG, "Cancel overlay added successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to add cancel overlay", e)
-        }
-    }
-
-    /**
-     * Hide cancel overlay
-     */
-    private fun hideCancelOverlay() {
-        cancelOverlay?.let { view ->
-            try {
-                windowManager?.removeView(view)
-                Log.d(TAG, "Cancel overlay removed")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error removing cancel overlay", e)
-            }
-        }
-        cancelOverlay = null
-    }
-
-    /**
-     * Handle cancel button tap - buzz, beep, cleanup
-     */
-    private fun handleCancelTap() {
+    private fun handleCancelFromOverlay() {
         if (isCancelled) {
             Log.d(TAG, "Already cancelled, ignoring duplicate tap")
             return
@@ -1030,36 +910,18 @@ class RecordingService : Service() {
         isCancelled = true
 
         // Short vibration
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator?.vibrate(100)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Vibration error", e)
-        }
+        vibrateShort()
 
         // Short beep
-        try {
-            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
-            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
-            handler.postDelayed({
-                toneGen.release()
-            }, 200)
-        } catch (e: Exception) {
-            Log.e(TAG, "Beep error", e)
-        }
+        playBeep()
 
         // Stop everything
         stopEverything()
 
         // Cleanup but keep service alive
         handler.postDelayed({
-            hideCancelOverlay()
+            CallOverlayController.dismiss()
             sessionInProgress = false
-            // Don't call stopSelf()
             Log.d(TAG, "Session cancelled, service ready for next trigger")
         }, 300)
     }
@@ -1090,6 +952,37 @@ class RecordingService : Service() {
 
         // Reset VAD
         vadPipeline?.reset()
+    }
+
+    /**
+     * Short vibration feedback
+     */
+    private fun vibrateShort() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createOneShot(100, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(100)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Vibration error", e)
+        }
+    }
+
+    /**
+     * Short beep feedback
+     */
+    private fun playBeep() {
+        try {
+            val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
+            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+            handler.postDelayed({
+                toneGen.release()
+            }, 200)
+        } catch (e: Exception) {
+            Log.e(TAG, "Beep error", e)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -1123,8 +1016,10 @@ class RecordingService : Service() {
         isCancelled = false
         sessionInProgress = true
 
-        // Show cancel button FIRST
-        showCancelOverlay()
+        // Show cancel overlay via controller
+        CallOverlayController.showRecording {
+            handleCancelFromOverlay()
+        }
 
         // Then start recording session
         Log.d(TAG, "Starting new recording session")
@@ -1168,8 +1063,8 @@ class RecordingService : Service() {
             Log.e(TAG, "Error cleaning up VAD pipeline", e)
         }
 
-        // Hide cancel overlay
-        hideCancelOverlay()
+        // Dismiss overlay via controller
+        CallOverlayController.dismiss()
 
         audioRecord = null
         vadPipeline = null

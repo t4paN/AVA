@@ -1,4 +1,4 @@
-// CallManagerService.kt
+//CallManagerService.kt
 
 package com.t4paN.AVA
 
@@ -8,9 +8,6 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
-import android.graphics.PixelFormat
-import android.graphics.Typeface
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.net.Uri
@@ -25,23 +22,15 @@ import android.speech.tts.UtteranceProgressListener
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import android.util.Log
-import android.util.TypedValue
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
-import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import androidx.core.widget.TextViewCompat
 
 /**
  * CallManagerService - Owns the entire post-match call flow
- * 
- * UPDATED: VoIP calling logic extracted to VoIPManager.
- * This service now delegates VoIP calls instead of handling them directly.
+ *
+ * Handles call announcement, confirmation, and placement.
+ * Overlays are delegated to CallOverlayController.
+ * VoIP calls are delegated to VoIPManager.
  */
 class CallManagerService : Service() {
 
@@ -70,12 +59,6 @@ class CallManagerService : Service() {
         private const val TTS_RATE_NORMAL = 1.0f
         private const val TTS_RATE_SLOW = 0.75f
 
-        // Colors
-        private const val COLOR_RED = 0xFFCC0000.toInt()
-        private const val COLOR_ORANGE = 0xFFFF8C00.toInt()
-        private const val COLOR_BLUE = 0xFF4169E1.toInt()
-        private const val COLOR_GREEN = 0xFF00AA00.toInt()
-        
         // VoIP package names for routing detection
         private const val VIBER_PACKAGE = "com.viber.voip"
         private const val WHATSAPP_PACKAGE = "com.whatsapp"
@@ -101,14 +84,9 @@ class CallManagerService : Service() {
     private var ambiguousRoutings: List<String>? = null
 
     // System services
-    private var windowManager: WindowManager? = null
     private var vibrator: Vibrator? = null
     private var telephonyManager: TelephonyManager? = null
     private var telecomManager: TelecomManager? = null
-
-    // Overlays
-    private var overlayView: View? = null
-    private var selectionOverlay: View? = null
 
     // Handler for delays
     private val handler = Handler(Looper.getMainLooper())
@@ -130,7 +108,6 @@ class CallManagerService : Service() {
         isServiceAlive = true
         Log.d(TAG, "CallManagerService created")
 
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
 
@@ -273,14 +250,13 @@ class CallManagerService : Service() {
             playBeep()
             announceCall(name)
             handler.postDelayed({
-                // Check auto-call setting to decide which overlay to show
-                if (autoCallEnabled) {
-                    // Show red cancel overlay (will auto-call after TTS)
-                    showCancelOverlay(name)
-                } else {
-                    // Show green+red confirmation overlay immediately
-                    showCallConfirmationOverlay()
-                }
+                // Show overlay via controller
+                CallOverlayController.showAnnouncing(
+                    contactName = name,
+                    autoCall = autoCallEnabled,
+                    onConfirm = if (!autoCallEnabled) { { handleCallTap() } } else null,
+                    onCancel = { handleCancelTap() }
+                )
             }, 300)
         }, 400)
     }
@@ -310,7 +286,6 @@ class CallManagerService : Service() {
         } else {
             Log.d(TAG, "Auto-call disabled, confirmation overlay already showing - waiting for user tap")
             // Green+red overlay is already showing, just wait for user to tap
-            // No need to hide/show anything
         }
     }
 
@@ -341,6 +316,7 @@ class CallManagerService : Service() {
             }, 800)
         }
     }
+
     /**
      * Place a VoIP call via VoIPManager.
      * Handles auto-click vs haptic guide based on settings and calibration.
@@ -362,8 +338,8 @@ class CallManagerService : Service() {
             return
         }
 
-        // Hide overlay before launching VoIP app
-        hideCancelOverlay()
+        // Dismiss overlay before launching VoIP app
+        CallOverlayController.dismiss()
 
         VoIPManager.placeCall(
             context = this,
@@ -429,10 +405,12 @@ class CallManagerService : Service() {
 
         playBeep()
 
-        // Show selection overlay with boxes above, cancel below
-        showSelectionOverlay(
-            names.getOrNull(0) ?: "?",
-            names.getOrNull(1) ?: "?"
+        // Show selection overlay via controller
+        CallOverlayController.showSelection(
+            name1 = names.getOrNull(0) ?: "?",
+            name2 = names.getOrNull(1) ?: "?",
+            onSelect = { index -> onSelectionMade(index) },
+            onCancel = { handleCancelTap() }
         )
 
         // Announce options with slower speech
@@ -457,7 +435,6 @@ class CallManagerService : Service() {
 
         if (name != null && number != null) {
             TtsManager.stop()
-            hideSelectionOverlay()
 
             pendingName = name
             pendingNumber = number
@@ -465,304 +442,21 @@ class CallManagerService : Service() {
 
             currentPhase = CallPhase.ANNOUNCING
             announceCall(name)
-            showCancelOverlay(name)
+
+            // Show announcing overlay (always auto-call after selection)
+            CallOverlayController.showAnnouncing(
+                contactName = name,
+                autoCall = true,
+                onConfirm = null,
+                onCancel = { handleCancelTap() }
+            )
         } else {
             Log.e(TAG, "Invalid selection index: $index")
             cleanup()
         }
     }
 
-    // ==================== SELECTION OVERLAY ====================
-
-    private fun showSelectionOverlay(name1: String, name2: String) {
-        if (selectionOverlay != null) {
-            Log.w(TAG, "Selection overlay already showing")
-            return
-        }
-
-        Log.d(TAG, "Showing selection overlay: $name1 vs $name2")
-
-        val displayMetrics = resources.displayMetrics
-        val screenHeight = displayMetrics.heightPixels
-        val screenWidth = displayMetrics.widthPixels
-        val density = displayMetrics.density
-
-        val marginPx = (24 * density).toInt()
-        val gapPx = (16 * density).toInt()
-        val cornerRadiusPx = (24 * density)
-
-        // Layout: Two boxes side-by-side at top, cancel zone at bottom
-        val cancelHeight = screenHeight / 4
-        val boxesHeight = screenHeight - cancelHeight - (marginPx * 2) - gapPx
-        val boxWidth = (screenWidth - (marginPx * 2) - gapPx) / 2
-
-        val mainContainer = FrameLayout(this).apply{
-            setBackgroundColor(0xFF000000.toInt())
-        }
-
-        // Box 1 (LEFT) - Orange
-        val box1 = createSelectionBox(name1, COLOR_ORANGE, cornerRadiusPx) {
-            onSelectionMade(0)
-        }
-        val box1Params = FrameLayout.LayoutParams(
-            boxWidth,
-            boxesHeight
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            topMargin = marginPx
-            leftMargin = marginPx
-        }
-        mainContainer.addView(box1, box1Params)
-
-        // Box 2 (RIGHT) - Blue
-        val box2 = createSelectionBox(name2, COLOR_BLUE, cornerRadiusPx) {
-            onSelectionMade(1)
-        }
-        val box2Params = FrameLayout.LayoutParams(
-            boxWidth,
-            boxesHeight
-        ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            topMargin = marginPx
-            rightMargin = marginPx
-        }
-        mainContainer.addView(box2, box2Params)
-
-        // Cancel zone (bottom)
-        val cancelZone = FrameLayout(this).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(COLOR_RED)
-                cornerRadii = floatArrayOf(
-                    cornerRadiusPx, cornerRadiusPx,  // top-left
-                    cornerRadiusPx, cornerRadiusPx,  // top-right
-                    0f, 0f,                          // bottom-right
-                    0f, 0f                           // bottom-left
-                )
-            }
-            setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    handleCancelTap()
-                }
-                true
-            }
-        }
-
-        val cancelText = TextView(this).apply {
-            text = "ΑΚΥΡΟ"
-            setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-        }
-        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
-            cancelText, 24, 48, 2, android.util.TypedValue.COMPLEX_UNIT_SP
-        )
-        cancelZone.addView(cancelText, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-
-        val cancelParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            cancelHeight
-        ).apply {
-            gravity = Gravity.BOTTOM
-        }
-        mainContainer.addView(cancelZone, cancelParams)
-
-        selectionOverlay = mainContainer
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        )
-
-        try {
-            windowManager?.addView(selectionOverlay, params)
-            Log.d(TAG, "Selection overlay added successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to add selection overlay", e)
-        }
-    }
-    private fun createSelectionBox(
-        name: String,
-        color: Int,
-        cornerRadius: Float,
-        onClick: () -> Unit
-    ): FrameLayout {
-        return FrameLayout(this).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(color)
-                this.cornerRadius = cornerRadius
-            }
-            setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    onClick()
-                }
-                true
-            }
-
-            val nameText = TextView(context).apply {
-                text = formatNameForButton(stripRoutingSuffix(name))
-                setTextColor(Color.WHITE)
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setPadding(
-                    (16 * resources.displayMetrics.density).toInt(),
-                    (16 * resources.displayMetrics.density).toInt(),
-                    (16 * resources.displayMetrics.density).toInt(),
-                    (16 * resources.displayMetrics.density).toInt()
-                )
-            }
-            TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
-                nameText, 24, 72, 2, TypedValue.COMPLEX_UNIT_SP
-            )
-            addView(nameText, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            ))
-        }
-    }
-
-    private fun hideSelectionOverlay() {
-        selectionOverlay?.let { view ->
-            try {
-                windowManager?.removeView(view)
-                Log.d(TAG, "Selection overlay removed")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error removing selection overlay", e)
-            }
-        }
-        selectionOverlay = null
-    }
-
-    // ==================== CALL CONFIRMATION OVERLAY ====================
-
-    private fun showCallConfirmationOverlay() {
-        if (overlayView != null) {
-            Log.w(TAG, "Overlay already showing")
-            return
-        }
-
-        val name = pendingName ?: return
-        Log.d(TAG, "Showing call confirmation overlay for: $name")
-
-        val displayMetrics = resources.displayMetrics
-        val screenHeight = displayMetrics.heightPixels
-        val screenWidth = displayMetrics.widthPixels
-        val density = displayMetrics.density
-
-        val marginPx = (24 * density).toInt()
-        val gapPx = (16 * density).toInt()
-        val cornerRadiusPx = (24 * density)
-
-        // Green button takes 60% of available height, red button takes 40%
-        val totalHeight = (screenHeight * 0.8).toInt()
-        val greenHeight = (totalHeight * 0.58).toInt()
-        val redHeight = (totalHeight * 0.42).toInt()
-
-        val mainContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(0xFF000000.toInt())
-        }
-
-        // Green call button
-        val greenButton = FrameLayout(this).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(COLOR_GREEN)
-                cornerRadius = cornerRadiusPx
-            }
-            setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    handleCallTap()
-                }
-                true
-            }
-        }
-
-        val greenText = TextView(this).apply {
-            text = formatNameForButton(stripRoutingSuffix(name))
-            setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setPadding((16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt())
-        }
-        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
-            greenText, 24, 72, 2, TypedValue.COMPLEX_UNIT_SP
-        )
-        greenButton.addView(greenText, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-
-        val greenParams = LinearLayout.LayoutParams(
-            screenWidth - (marginPx * 2),
-            greenHeight
-        ).apply {
-            bottomMargin = gapPx
-        }
-        mainContainer.addView(greenButton, greenParams)
-
-        // Red cancel button
-        val redButton = FrameLayout(this).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(COLOR_RED)
-                cornerRadius = cornerRadiusPx
-            }
-            setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    handleCancelTap()
-                }
-                true
-            }
-        }
-
-        val redText = TextView(this).apply {
-            text = "ΑΚΥΡΟ"
-            setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-        }
-        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
-            redText, 24, 48, 2, TypedValue.COMPLEX_UNIT_SP
-        )
-        redButton.addView(redText, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-
-        val redParams = LinearLayout.LayoutParams(
-            screenWidth - (marginPx * 2),
-            redHeight
-        )
-        mainContainer.addView(redButton, redParams)
-
-        overlayView = mainContainer
-
-        val params = WindowManager.LayoutParams(
-            screenWidth,
-            greenHeight + redHeight + gapPx + marginPx,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = marginPx
-            x = 0
-        }
-
-        try {
-            windowManager?.addView(overlayView, params)
-            Log.d(TAG, "Call confirmation overlay added successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to add call confirmation overlay", e)
-        }
-    }
+    // ==================== CANCEL HANDLING ====================
 
     /**
      * Handle green call button tap
@@ -774,95 +468,6 @@ class CallManagerService : Service() {
 
         currentPhase = CallPhase.CALLING
         placeCall()
-    }
-
-    // ==================== CANCEL OVERLAY (Red button with name) ====================
-
-    private fun showCancelOverlay(contactName: String) {
-        if (overlayView != null) {
-            Log.w(TAG, "Overlay already showing")
-            return
-        }
-
-        Log.d(TAG, "Showing cancel overlay for: $contactName")
-
-        val displayMetrics = resources.displayMetrics
-        val screenHeight = displayMetrics.heightPixels
-        val screenWidth = displayMetrics.widthPixels
-        val density = displayMetrics.density
-
-        val marginPx = (24 * density).toInt()
-        val cornerRadiusPx = (24 * density)
-        // Full screen black container
-        val fullContainer = FrameLayout(this).apply {
-            setBackgroundColor(0xFF000000.toInt())
-        }
-
-        val container = FrameLayout(this).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(COLOR_RED)
-                cornerRadius = cornerRadiusPx
-            }
-            setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    handleCancelTap()
-                }
-                true
-            }
-        }
-
-        // Big text with contact name - no brackets, words on separate lines
-        val nameText = TextView(this).apply {
-            text = formatNameForButton(stripRoutingSuffix(contactName))
-            setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setPadding((16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt())
-        }
-        TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
-            nameText, 24, 72, 2, TypedValue.COMPLEX_UNIT_SP
-        )
-        container.addView(nameText, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-
-        fullContainer.addView(container, FrameLayout.LayoutParams(
-            screenWidth - (marginPx * 2),
-            (screenHeight / 2) - marginPx
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            bottomMargin = marginPx
-        })
-        overlayView = fullContainer
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        )
-
-        try {
-            windowManager?.addView(overlayView, params)
-            Log.d(TAG, "Overlay added successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to add overlay", e)
-        }
-    }
-
-    private fun hideCancelOverlay() {
-        overlayView?.let { view ->
-            try {
-                windowManager?.removeView(view)
-                Log.d(TAG, "Overlay removed")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error removing overlay", e)
-            }
-        }
-        overlayView = null
     }
 
     private fun handleCancelTap() {
@@ -907,16 +512,6 @@ class CallManagerService : Service() {
     }
 
     // ==================== UTILITIES ====================
-
-    /**
-     * Format name for button display:
-     * - No brackets
-     * - Each word on new line for max size
-     * - Uppercase for readability
-     */
-    private fun formatNameForButton(name: String): String {
-        return name.uppercase().split(" ").joinToString("\n")
-    }
 
     /**
      * Strip routing suffix (VIBER, WHATSAPP, SIGNAL) from display name
@@ -966,8 +561,8 @@ class CallManagerService : Service() {
         ambiguousNumbers = null
         ambiguousRoutings = null
 
-        hideCancelOverlay()
-        hideSelectionOverlay()
+        // Dismiss overlay via controller
+        CallOverlayController.dismiss()
 
         // Cancel any VoIP polling
         VoIPManager.cancelPolling()
