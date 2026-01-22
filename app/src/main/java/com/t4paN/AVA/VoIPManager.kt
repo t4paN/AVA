@@ -271,6 +271,8 @@ object VoIPManager {
         }
     }
 
+    fun isActive(): Boolean = isActive
+
     fun getAvailableApps(context: Context): List<VoIPAppConfig> {
         return VoIPAppRegistry.getAvailableApps(context)
     }

@@ -9,8 +9,9 @@ import kotlin.math.min
  * Multi-layered fuzzy contact matcher for rough Greek speech transcriptions
  *
  * NOW WITH:
+ * - Unified phonetic normalization (ει→ι, οι→ι, αι→ε, η→ι, υ→ι, ω→ο, γγ→γκ)
+ * - Improved intent boundary detection (finds ισι/ισε pattern in first 6 chars)
  * - Flashlight and Radio intent detection
- * - Lowered threshold (0.6) for better garbled command detection
  * - Multi-word fallback (2+ words = CALL by default)
  * - Token-level length factor (penalizes tiny tokens matching huge contact names)
  */
@@ -35,46 +36,30 @@ object SuperFuzzyContactMatcher {
     )
 
     /**
-     * Call intent patterns - both clean and garbled variants
+     * Call intent patterns - trimmed since normalization + boundary detection handles most cases
+     * These catch patterns that don't contain the ισι/ισε boundary
      */
     private val callIntentPatterns = listOf(
-        // Perfect transcriptions
-        "κλήση", "κλιση", "κληση", "κλησι", "κλησί",
-        "κάλεσε", "καλεσε", "καλέστε", "καλεστε",
-        "πάρε", "παρε", "πάρτε", "παρτε",
-        "τηλεφώνησε", "τηλεφωνησε", "τηλέφωνο", "τηλεφωνο",
-        "καλώ", "καλω", "call", "καλ",
-
-        // Garbled prefixes (common after �� removal)
-        "ιση", "ισι", "ιθη", "ισθη", "ισθι",
-        "υσι", "υση", "υσθι", "υθη",
-        "κλυσι", "κλυσί", "κλιση", "κλίση",
-        "λιση", "λησι", "λυσι",
-
-        // More extreme garbling
-        "ζαι", "ζη", "ζι", "ζει",
-        "σι", "ση", "θι", "θη",
-        "κι", "κη", "κει",
-        "λι", "λη", "λει",
-
-        // Very short remnants
-        "κλ", "κα", "πα", "τη"
+        // Main normalized forms (κλισι caught by boundary detection)
+        "καλεσε", "καλεστε",
+        "παρε", "παρτε",
+        "τιλεφονισε", "τιλεφονο",
+        "καλο", "call", "καλ"
     )
 
     /**
-     * Flashlight intent patterns
+     * Flashlight intent patterns (normalized forms)
      */
     private val flashlightIntentPatterns = listOf(
-        "φακός", "φακος", "φακό", "φακο",
-        "φάκος", "φάκο"
+        "φακος", "φακο"
     )
 
     /**
-     * Radio intent patterns
+     * Radio intent patterns (normalized forms)
      */
     private val radioIntentPatterns = listOf(
-        "ραδιόφωνο", "ραδιοφωνο", "ραδιόφωνα", "ραδιοφωνα",
-        "ραδιο", "ράδιο", "radio"
+        "ραδιοφονο", "ραδιοφονα",
+        "ραδιο", "radio"
     )
 
     /**
@@ -128,7 +113,7 @@ object SuperFuzzyContactMatcher {
         Log.d(TAG, "Raw transcription: '$transcription'")
         Log.d(TAG, "Total contacts: ${contacts.size}")
 
-        // Step 1: Clean transcription (removes ��, normalizes)
+        // Step 1: Clean transcription (removes ��, normalizes phonetically)
         val cleaned = cleanTranscription(transcription)
         Log.d(TAG, "After cleaning: '$cleaned'")
 
@@ -226,8 +211,9 @@ object SuperFuzzyContactMatcher {
      *
      * Strategy (in order):
      * 1. Check single-word special commands (flashlight, radio)
-     * 2. Try fuzzy pattern matching for call commands
-     * 3. Multi-word fallback: 2+ words = CALL (strip first word)
+     * 2. Try boundary detection for CALL (look for ισι/ισε pattern in first 6 chars)
+     * 3. Try fuzzy pattern matching for call commands
+     * 4. Multi-word fallback: 2+ words = CALL (strip first word)
      *
      * Returns: Pair(Intent?, cleanedText)
      */
@@ -260,12 +246,26 @@ object SuperFuzzyContactMatcher {
                 return Pair(Intent.RADIO, "")
             }
 
+            // STEP 1b: Try boundary detection for single merged word (e.g., "κλισιξα")
+            val boundaryResult = tryBoundaryDetection(text)
+            if (boundaryResult != null) {
+                Log.d(TAG, "Call intent detected via boundary in single word: '$text'")
+                return boundaryResult
+            }
+
             // Single word with no special command = reject
             Log.d(TAG, "Single word with no recognized intent")
             return Pair(null, text)
         }
 
-        // STEP 2: Try pattern matching for CALL commands (multi-word)
+        // STEP 2: Try boundary detection for CALL (handles merged/garbled κλήση)
+        val boundaryResult = tryBoundaryDetection(text)
+        if (boundaryResult != null) {
+            Log.d(TAG, "Call intent detected via boundary detection")
+            return boundaryResult
+        }
+
+        // STEP 3: Try pattern matching for CALL commands (multi-word)
 
         // Check first token
         val firstToken = tokens[0]
@@ -293,7 +293,7 @@ object SuperFuzzyContactMatcher {
             }
         }
 
-        // STEP 3: Multi-word fallback (assume CALL if 2+ words but no pattern match)
+        // STEP 4: Multi-word fallback (assume CALL if 2+ words but no pattern match)
         if (tokens.size >= 2) {
             Log.d(TAG, "No pattern match, but 2+ words - assuming CALL intent, stripping '${tokens[0]}'")
             val remaining = tokens.drop(1).joinToString(" ")
@@ -304,15 +304,113 @@ object SuperFuzzyContactMatcher {
         return Pair(null, text)
     }
 
+    /**
+     * Try to detect CALL intent via boundary detection
+     * 
+     * Looks for ισι, ισε, or ισαι pattern within first 6 characters (ignoring spaces)
+     * Returns the remaining text after the pattern as the contact name
+     */
+    private fun tryBoundaryDetection(text: String): Pair<Intent, String>? {
+        // Build a mapping from no-space index to original index
+        val noSpaceToOriginal = mutableListOf<Int>()
+        for ((idx, char) in text.withIndex()) {
+            if (char != ' ') {
+                noSpaceToOriginal.add(idx)
+            }
+        }
+        
+        val noSpaceText = text.replace(" ", "")
+        
+        if (noSpaceText.length < 3) return null
+        
+        // Only look in first 6 characters (without spaces)
+        val searchArea = noSpaceText.take(6)
+        
+        // Look for ισαι first (4 chars, more specific)
+        val isaiIdx = searchArea.indexOf("ισαι")
+        if (isaiIdx != -1) {
+            // Cut after ισαι (4 chars)
+            val cutAfterNoSpace = isaiIdx + 4
+            if (cutAfterNoSpace <= noSpaceToOriginal.size) {
+                val cutAfterOriginal = if (cutAfterNoSpace < noSpaceToOriginal.size) {
+                    noSpaceToOriginal[cutAfterNoSpace]
+                } else {
+                    text.length
+                }
+                val remaining = text.substring(cutAfterOriginal).trim()
+                Log.d(TAG, "Boundary detection: found 'ισαι' at $isaiIdx, remaining: '$remaining'")
+                return Pair(Intent.CALL, remaining)
+            }
+        }
+        
+        // Look for ισι (3 chars)
+        val isiIdx = searchArea.indexOf("ισι")
+        if (isiIdx != -1) {
+            // Cut after ισι (3 chars)
+            val cutAfterNoSpace = isiIdx + 3
+            if (cutAfterNoSpace <= noSpaceToOriginal.size) {
+                val cutAfterOriginal = if (cutAfterNoSpace < noSpaceToOriginal.size) {
+                    noSpaceToOriginal[cutAfterNoSpace]
+                } else {
+                    text.length
+                }
+                val remaining = text.substring(cutAfterOriginal).trim()
+                Log.d(TAG, "Boundary detection: found 'ισι' at $isiIdx, remaining: '$remaining'")
+                return Pair(Intent.CALL, remaining)
+            }
+        }
+        
+        // Look for ισε (3 chars) - from αι→ε normalization
+        val iseIdx = searchArea.indexOf("ισε")
+        if (iseIdx != -1) {
+            // Cut after ισε (3 chars)
+            val cutAfterNoSpace = iseIdx + 3
+            if (cutAfterNoSpace <= noSpaceToOriginal.size) {
+                val cutAfterOriginal = if (cutAfterNoSpace < noSpaceToOriginal.size) {
+                    noSpaceToOriginal[cutAfterNoSpace]
+                } else {
+                    text.length
+                }
+                val remaining = text.substring(cutAfterOriginal).trim()
+                Log.d(TAG, "Boundary detection: found 'ισε' at $iseIdx, remaining: '$remaining'")
+                return Pair(Intent.CALL, remaining)
+            }
+        }
+        
+        return null
+    }
+
     // --- CLEANING / NORMALIZATION ---
 
     /**
-     * Clean transcription: normalize, remove noise (��), deduplicate repeated chars
+     * Clean transcription: normalize phonetically, remove noise (��), deduplicate repeated chars
+     * 
+     * Applies full phonetic normalization so all downstream matching uses consistent forms:
+     * - ει → ι, οι → ι, αι → ε (digraphs)
+     * - η → ι, υ → ι (vowel equivalents)
+     * - ω → ο (vowel equivalent)
+     * - γγ → γκ (consonant cluster)
      */
     fun cleanTranscription(text: String): String {
+        // Step 1: lowercase + remove accents
         val noAccents = normalizeGreek(text)
-        val noNoise = noAccents.replace(Regex("[^α-ω ]"), " ") // Removes ��
-        val dedup = noNoise.replace(Regex("([α-ω])\\1{2,}"), "$1") // "δημμμιτρης" → "δημιτρης"
+        
+        // Step 2: phonetic normalization (order matters - do digraphs first)
+        val phonetic = noAccents
+            .replace("ει", "ι")
+            .replace("οι", "ι")
+            .replace("αι", "ε")
+            .replace("η", "ι")
+            .replace(Regex("(?<!ο)υ"), "ι")  // υ → ι only when NOT part of ου
+            .replace("ω", "ο")
+            .replace("γγ", "γκ")
+        
+        // Step 3: remove non-Greek chars (removes ��)
+        val noNoise = phonetic.replace(Regex("[^α-ω ]"), " ")
+        
+        // Step 4: deduplicate repeated chars ("δημμμιτρης" → "δημιτρης")
+        val dedup = noNoise.replace(Regex("([α-ω])\\1{2,}"), "$1")
+        
         return dedup.trim().replace(Regex("\\s+"), " ")
     }
 
@@ -457,9 +555,9 @@ object SuperFuzzyContactMatcher {
         }
 
         breakdown.add("Tok:$bestTokenMatch")
-        totalScore += bestTokenScore * 0.6
+        totalScore += bestTokenScore * 0.4
 
-        // 2. Full string comparison WITH LENGTH FACTOR (30% weight)
+        // 2. Full string comparison WITH LENGTH FACTOR (40% weight)
         val fullSpoken = originalTokens.joinToString("")
 
         val rawFullScore = similarity(fullSpoken, fullContactConcat)
@@ -467,13 +565,14 @@ object SuperFuzzyContactMatcher {
         val fullScore = rawFullScore * fullLengthFactor
 
         breakdown.add("Full:'$fullSpoken'~'$fullContactConcat'=${"%.3f".format(rawFullScore)}*${"%.2f".format(fullLengthFactor)}")
-        totalScore += fullScore * 0.3
+        totalScore += fullScore * 0.4
 
-        // 3. Prefix bonus (10% weight)
+        // 3. Prefix bonus (20% weight) - first 2 chars must match
         val firstToken = originalTokens.firstOrNull() ?: ""
-        if (fullContactConcat.startsWith(firstToken) && firstToken.isNotEmpty()) {
-            breakdown.add("Pre:+0.1")
-            totalScore += 0.1
+        if (firstToken.length >= 2 && fullContactConcat.length >= 2 &&
+            firstToken.substring(0, 2) == fullContactConcat.substring(0, 2)) {
+            breakdown.add("Pre:+0.2")
+            totalScore += 0.2
         }
 
         return totalScore to breakdown.joinToString("|")
@@ -499,25 +598,27 @@ object SuperFuzzyContactMatcher {
     // --- SIMILARITY FUNCTIONS ---
 
     /**
-     * Similarity with phonetic boost
+     * Similarity score using Levenshtein distance
+     * 
+     * Note: phoneticSimplify removed since normalization now happens in cleanTranscription()
      */
     private fun similarity(a: String, b: String): Double {
-        val lev = levenshteinSimilarity(a, b)
-        val ph = levenshteinSimilarity(phoneticSimplify(a), phoneticSimplify(b))
-        return maxOf(lev, ph)
+        return levenshteinSimilarity(a, b)
     }
 
-    /**
-     * Phonetic simplification for Greek
+    /*
+     * COMMENTED OUT - phoneticSimplify logic moved to cleanTranscription()
+     * Keeping for reference in case we need phonetic-only matching later
+     *
+     * private fun phoneticSimplify(s: String): String = s
+     *     .replace("γγ", "γκ")
+     *     .replace("ω", "ο")
+     *     .replace("η", "ι")
+     *     .replace("υ", "ι")
+     *     .replace("ει", "ι")
+     *     .replace("οι", "ι")
+     *     .replace("αι", "ε")
      */
-    private fun phoneticSimplify(s: String): String = s
-        .replace("γγ", "γκ")
-        .replace("ω", "ο")
-        .replace("η", "ι")
-        .replace("υ", "ι")
-        .replace("ει", "ι")
-        .replace("οι", "ι")
-        .replace("αι", "ε")
 
     /**
      * Calculate Levenshtein similarity (1.0 = identical, 0.0 = completely different)

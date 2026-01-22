@@ -39,7 +39,18 @@ object RadioStations {
             id = "metropolis",
             displayName = "Μετρόπολις",
             streamUrl = "http://metropolis.live24.gr/metropolis955thess"
+        ),
+        RadioStation(
+            id = "maestro",
+            displayName = "Μαέστρο",
+            streamUrl = "https://radiostreaming.ert.gr/ert-trito-maestro"
+        ),
+        RadioStation(
+            id = "rebelfm",
+            displayName = "Rebel FM",
+            streamUrl = "https://netradio.live24.gr/rebel1052"
         )
+
     )
 
     private var cachedStations: List<RadioStation>? = null

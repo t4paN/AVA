@@ -78,6 +78,9 @@ class CallManagerService : Service() {
     private var pendingName: String? = null
     private var pendingRouting: String? = null
 
+    // Flag to force auto-call after ambiguous selection (user already confirmed by picking)
+    private var forceAutoCall = false
+
     // Ambiguous match state
     private var ambiguousNames: List<String>? = null
     private var ambiguousNumbers: List<String>? = null
@@ -127,7 +130,7 @@ class CallManagerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand: action=${intent?.action}")
+        Log.d(TAG, "onStartCommand: action=${intent?.action}, currentPhase=$currentPhase")
 
         when (intent?.action) {
             ACTION_SINGLE_MATCH -> {
@@ -244,6 +247,7 @@ class CallManagerService : Service() {
         pendingName = name
         pendingNumber = number
         pendingRouting = routing
+        forceAutoCall = false  // Single match respects autoCallEnabled setting
 
         currentPhase = CallPhase.ANNOUNCING
         handler.postDelayed({
@@ -271,16 +275,17 @@ class CallManagerService : Service() {
     }
 
     private fun onAnnouncementComplete() {
-        Log.d(TAG, "Announcement complete, phase=$currentPhase, autoCall=$autoCallEnabled")
+        Log.d(TAG, "Announcement complete, phase=$currentPhase, autoCall=$autoCallEnabled, forceAutoCall=$forceAutoCall")
 
         if (currentPhase != CallPhase.ANNOUNCING) {
             Log.d(TAG, "Call was cancelled during announcement")
             return
         }
 
-        // Check auto-call setting
-        if (autoCallEnabled) {
-            Log.d(TAG, "Auto-call enabled, placing call immediately")
+        // Auto-call if setting enabled OR if user already confirmed via ambiguous selection
+        if (autoCallEnabled || forceAutoCall) {
+            Log.d(TAG, "Placing call (autoCall=$autoCallEnabled, forceAutoCall=$forceAutoCall)")
+            forceAutoCall = false  // Reset flag
             currentPhase = CallPhase.CALLING
             placeCall()
         } else {
@@ -395,7 +400,13 @@ class CallManagerService : Service() {
     // ==================== AMBIGUOUS MATCH FLOW ====================
 
     private fun handleAmbiguousMatch(names: List<String>, numbers: List<String>, routings: List<String>) {
-        Log.i(TAG, "Ambiguous match: ${names.joinToString(" vs ")}")
+        Log.i(TAG, "Ambiguous match: ${names.joinToString(" vs ")}, currentPhase=$currentPhase")
+
+        // Defensive: make sure we're not in a weird state
+        if (currentPhase != CallPhase.IDLE) {
+            Log.w(TAG, "handleAmbiguousMatch called while phase=$currentPhase, resetting")
+            CallOverlayController.dismiss()
+        }
 
         ambiguousNames = names
         ambiguousNumbers = numbers
@@ -406,12 +417,14 @@ class CallManagerService : Service() {
         playBeep()
 
         // Show selection overlay via controller
+        Log.d(TAG, "Showing selection overlay...")
         CallOverlayController.showSelection(
             name1 = names.getOrNull(0) ?: "?",
             name2 = names.getOrNull(1) ?: "?",
             onSelect = { index -> onSelectionMade(index) },
             onCancel = { handleCancelTap() }
         )
+        Log.d(TAG, "Selection overlay shown, overlayState=${CallOverlayController.currentState()}")
 
         // Announce options with slower speech
         handler.postDelayed({
@@ -440,10 +453,13 @@ class CallManagerService : Service() {
             pendingNumber = number
             pendingRouting = routing
 
+            // User already confirmed by selecting - force auto-call regardless of setting
+            forceAutoCall = true
+
             currentPhase = CallPhase.ANNOUNCING
             announceCall(name)
 
-            // Show announcing overlay (always auto-call after selection)
+            // Show announcing overlay (red cancel only, will auto-call after TTS)
             CallOverlayController.showAnnouncing(
                 contactName = name,
                 autoCall = true,
@@ -553,6 +569,7 @@ class CallManagerService : Service() {
         Log.d(TAG, "Cleaning up CallManagerService")
 
         currentPhase = CallPhase.IDLE
+        forceAutoCall = false
 
         pendingName = null
         pendingNumber = null

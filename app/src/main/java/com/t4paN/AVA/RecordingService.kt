@@ -340,7 +340,7 @@ class RecordingService : Service() {
             if (!isCancelled) {
                 prepareRecorder()
             }
-        }, 200)
+        }, 50)
     }
 
     /**
@@ -649,11 +649,10 @@ class RecordingService : Service() {
             } finally {
                 isProcessing = false
                 sessionInProgress = false
-                handler.post {
-                    CallOverlayController.dismiss()
-                }
+                // Don't dismiss overlay here - CallManagerService owns it now if we handed off
                 Log.d(TAG, "Transcription complete, service staying alive for next recording")
             }
+
         }.start()
     }
 
@@ -976,10 +975,10 @@ class RecordingService : Service() {
     private fun playBeep() {
         try {
             val toneGen = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
-            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
             handler.postDelayed({
                 toneGen.release()
-            }, 200)
+            }, 20)
         } catch (e: Exception) {
             Log.e(TAG, "Beep error", e)
         }
@@ -1027,7 +1026,7 @@ class RecordingService : Service() {
             if (!isCancelled) {
                 playPrompt()
             }
-        }, 100)
+        }, 10)
 
         return START_STICKY
     }

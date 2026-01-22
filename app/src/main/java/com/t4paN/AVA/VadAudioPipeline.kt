@@ -24,7 +24,7 @@ class VadAudioPipeline(context: Context) {
         private const val TAG = "VadAudioPipeline"
 
         // VAD parameters - matched closer to woheller69's settings
-        const val SILENCE_TIMEOUT_MS = 400      // woheller69 uses 800ms
+        const val SILENCE_TIMEOUT_MS = 700      // woheller69 uses 800ms
         const val MIN_SPEECH_MS = 200           // woheller69 uses 200ms
         const val FRAME_SIZE_SAMPLES = 512      // Silero VAD frame size at 16kHz
         
