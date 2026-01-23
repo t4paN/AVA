@@ -689,10 +689,11 @@ class RecordingService : Service() {
                 addLogEntry(logEntry)
 
                 handler.post {
-                    safeToast("Flashlight detected!")
+                    CallOverlayController.dismiss()
+                    val magnifierIntent = Intent(this@RecordingService, MagnifierActivity::class.java)
+                    magnifierIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(magnifierIntent)
                 }
-
-                // TODO: Implement flashlight toggle
             }
 
             SuperFuzzyContactMatcher.Intent.RADIO -> {

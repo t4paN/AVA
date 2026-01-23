@@ -16,10 +16,13 @@
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
 
 
-    <!-- Optional but recommended so CALL_PHONE doesn't trigger a hardware warning -->
+
+    <!-- Optional but recommended so CALL_PHONE and CAMERA don't trigger a hardware warning -->
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:name=".AVAApplication"
@@ -121,6 +124,14 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!-- Magnifier and Flashlight -->
+        <activity
+            android:name=".MagnifierActivity"
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:exported="false" />
 
     </application>
 

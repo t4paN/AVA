@@ -381,21 +381,30 @@ object SuperFuzzyContactMatcher {
     }
 
     // --- CLEANING / NORMALIZATION ---
+    
+    // Placeholder for protecting άι from digraph conversion
+    private const val AI_PLACEHOLDER = "\u0000AI\u0000"
 
     /**
      * Clean transcription: normalize phonetically, remove noise (��), deduplicate repeated chars
      * 
      * Applies full phonetic normalization so all downstream matching uses consistent forms:
+     * - άι protected (two syllables, not digraph) - e.g. τσάι, Μάιος
      * - ει → ι, οι → ι, αι → ε (digraphs)
      * - η → ι, υ → ι (vowel equivalents)
      * - ω → ο (vowel equivalent)
      * - γγ → γκ (consonant cluster)
+     * 
+     * MUST match ContactRepository.normalizeName() exactly!
      */
     fun cleanTranscription(text: String): String {
-        // Step 1: lowercase + remove accents
-        val noAccents = normalizeGreek(text)
+        // Step 1: protect άι (two syllables, not digraph) BEFORE lowercasing
+        val protected = text.replace("άι", AI_PLACEHOLDER).replace("Άι", AI_PLACEHOLDER)
         
-        // Step 2: phonetic normalization (order matters - do digraphs first)
+        // Step 2: lowercase + remove accents
+        val noAccents = normalizeGreek(protected)
+        
+        // Step 3: phonetic normalization (order matters - do digraphs first)
         val phonetic = noAccents
             .replace("ει", "ι")
             .replace("οι", "ι")
@@ -405,11 +414,14 @@ object SuperFuzzyContactMatcher {
             .replace("ω", "ο")
             .replace("γγ", "γκ")
         
-        // Step 3: remove non-Greek chars (removes ��)
-        val noNoise = phonetic.replace(Regex("[^α-ω ]"), " ")
+        // Step 4: restore protected άι as αι
+        val restored = phonetic.replace(AI_PLACEHOLDER, "αι")
         
-        // Step 4: deduplicate repeated chars ("δημμμιτρης" → "δημιτρης")
-        val dedup = noNoise.replace(Regex("([α-ω])\\1{2,}"), "$1")
+        // Step 5: remove non-Greek chars (removes ��)
+        val noNoise = restored.replace(Regex("[^α-ω ]"), " ")
+        
+        // Step 6: deduplicate repeated chars ("ελεννι" → "ελενι")
+        val dedup = noNoise.replace(Regex("([α-ω])\\1+"), "$1")
         
         return dedup.trim().replace(Regex("\\s+"), " ")
     }
