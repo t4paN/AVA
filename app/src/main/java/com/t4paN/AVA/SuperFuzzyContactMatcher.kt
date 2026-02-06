@@ -58,8 +58,15 @@ object SuperFuzzyContactMatcher {
      * Radio intent patterns (normalized forms)
      */
     private val radioIntentPatterns = listOf(
-        "ραδιοφονο", "ραδιοφονα",
-        "ραδιο", "radio"
+        "ραδιοφονο", "ραδιοφονα", "ραδιοφωνο", "ραβιο", "πραβιω φονο",
+        "ραδιο", "ραβιο φωνο", "radio"
+    )
+
+    /**
+     * Missed calls intent patterns (normalized forms)
+     */
+    private val missedCallsIntentPatterns = listOf(
+        "αναπαντητες", "αναπαντητη", "αναπαντητα", "αναπαντητο"
     )
 
     /**
@@ -68,7 +75,8 @@ object SuperFuzzyContactMatcher {
     enum class Intent {
         CALL,
         FLASHLIGHT,
-        RADIO
+        RADIO,
+        MISSED_CALLS
     }
 
     /**
@@ -246,6 +254,15 @@ object SuperFuzzyContactMatcher {
                 return Pair(Intent.RADIO, "")
             }
 
+            // Check missed calls patterns
+            val isMissedCalls = missedCallsIntentPatterns.any { pattern ->
+                similarity(word, pattern) >= INTENT_SIMILARITY_THRESHOLD
+            }
+            if (isMissedCalls) {
+                Log.d(TAG, "Missed calls intent detected: '$word'")
+                return Pair(Intent.MISSED_CALLS, "")
+            }
+
             // STEP 1b: Try boundary detection for single merged word (e.g., "κλισιξα")
             val boundaryResult = tryBoundaryDetection(text)
             if (boundaryResult != null) {
@@ -291,6 +308,24 @@ object SuperFuzzyContactMatcher {
                 val remaining = tokens.drop(2).joinToString(" ")
                 return Pair(Intent.CALL, remaining)
             }
+        }
+        // Check combined tokens for radio (handles "ραβιο φωνο")
+        val combined = tokens.joinToString("")
+        val isCombinedRadio = radioIntentPatterns.any { pattern ->
+            similarity(combined, pattern) >= INTENT_SIMILARITY_THRESHOLD
+        }
+        if (isCombinedRadio) {
+            Log.d(TAG, "Radio intent detected in combined tokens: '$combined'")
+            return Pair(Intent.RADIO, "")
+        }
+
+        // Check combined tokens for missed calls (handles "ανα παντητες")
+        val isCombinedMissedCalls = missedCallsIntentPatterns.any { pattern ->
+            similarity(combined, pattern) >= INTENT_SIMILARITY_THRESHOLD
+        }
+        if (isCombinedMissedCalls) {
+            Log.d(TAG, "Missed calls intent detected in combined tokens: '$combined'")
+            return Pair(Intent.MISSED_CALLS, "")
         }
 
         // STEP 4: Multi-word fallback (assume CALL if 2+ words but no pattern match)

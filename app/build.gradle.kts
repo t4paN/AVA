@@ -11,8 +11,8 @@ android {
         applicationId = "com.t4paN.AVA"
         minSdk = 30
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.2.4"
+        versionCode = 8
+        versionName = "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -6,14 +6,42 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
+import org.json.JSONArray
 import org.json.JSONObject
+
+/**
+ * Single calibration step - one click position with optional screenshot
+ */
+data class CalibrationStep(
+    val clickX: Float,        // 0.0-1.0 relative position
+    val clickY: Float,
+    val waitTimeMs: Long = 3000,
+    val screenshotPath: String? = null
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("clickX", clickX.toDouble())
+        put("clickY", clickY.toDouble())
+        put("waitTimeMs", waitTimeMs)
+        put("screenshotPath", screenshotPath ?: "")
+    }
+    
+    companion object {
+        fun fromJson(json: JSONObject): CalibrationStep = CalibrationStep(
+            clickX = json.optDouble("clickX", -1.0).toFloat(),
+            clickY = json.optDouble("clickY", -1.0).toFloat(),
+            waitTimeMs = json.optLong("waitTimeMs", 3000),
+            screenshotPath = json.optString("screenshotPath").ifEmpty { null }
+        )
+    }
+}
 
 /**
  * VoIPAppConfig - Data model and registry for VoIP app configurations
  * 
  * Stores:
  * - Known VoIP apps with their deep link schemes
- * - Per-app calibration data (click position, wait time, screenshot path)
+ * - Per-app calibration data (click positions, wait times, screenshot paths)
+ * - Supports multiple calibration steps for multi-click flows
  * 
  * Single source of truth for both VoIPAutoClickManager and HapticGuideManager.
  */
@@ -21,13 +49,28 @@ data class VoIPAppConfig(
     val packageName: String,
     val displayName: String,
     val deepLinkScheme: String,  // Template with {phone} placeholder
-    val clickX: Float = -1f,     // 0.0-1.0 relative position, -1 = not calibrated
+    val clickX: Float = -1f,     // 0.0-1.0 relative position, -1 = not calibrated (legacy single-step)
     val clickY: Float = -1f,
     val waitTimeMs: Long = 3000, // Time to wait before clicking
-    val screenshotPath: String? = null
+    val screenshotPath: String? = null,
+    val steps: List<CalibrationStep> = emptyList()  // Multi-step calibration
 ) {
     val isCalibrated: Boolean
-        get() = clickX >= 0f && clickY >= 0f
+        get() = steps.isNotEmpty() || (clickX >= 0f && clickY >= 0f)
+    
+    /**
+     * Get all calibration steps (converts legacy single-step to list if needed)
+     */
+    fun getAllSteps(): List<CalibrationStep> {
+        return if (steps.isNotEmpty()) {
+            steps
+        } else if (clickX >= 0f && clickY >= 0f) {
+            // Legacy single-step format
+            listOf(CalibrationStep(clickX, clickY, waitTimeMs, screenshotPath))
+        } else {
+            emptyList()
+        }
+    }
     
     fun buildDeepLink(phoneNumber: String): String {
         // Strip everything except digits and leading +
@@ -43,18 +86,33 @@ data class VoIPAppConfig(
         put("clickY", clickY.toDouble())
         put("waitTimeMs", waitTimeMs)
         put("screenshotPath", screenshotPath ?: "")
+        put("steps", JSONArray().apply {
+            steps.forEach { put(it.toJson()) }
+        })
     }
     
     companion object {
-        fun fromJson(json: JSONObject): VoIPAppConfig = VoIPAppConfig(
-            packageName = json.getString("packageName"),
-            displayName = json.getString("displayName"),
-            deepLinkScheme = json.getString("deepLinkScheme"),
-            clickX = json.optDouble("clickX", -1.0).toFloat(),
-            clickY = json.optDouble("clickY", -1.0).toFloat(),
-            waitTimeMs = json.optLong("waitTimeMs", 3000),
-            screenshotPath = json.optString("screenshotPath").ifEmpty { null }
-        )
+        fun fromJson(json: JSONObject): VoIPAppConfig {
+            val stepsArray = json.optJSONArray("steps")
+            val steps = if (stepsArray != null) {
+                (0 until stepsArray.length()).map { 
+                    CalibrationStep.fromJson(stepsArray.getJSONObject(it)) 
+                }
+            } else {
+                emptyList()
+            }
+            
+            return VoIPAppConfig(
+                packageName = json.getString("packageName"),
+                displayName = json.getString("displayName"),
+                deepLinkScheme = json.getString("deepLinkScheme"),
+                clickX = json.optDouble("clickX", -1.0).toFloat(),
+                clickY = json.optDouble("clickY", -1.0).toFloat(),
+                waitTimeMs = json.optLong("waitTimeMs", 3000),
+                screenshotPath = json.optString("screenshotPath").ifEmpty { null },
+                steps = steps
+            )
+        }
     }
 }
 
@@ -101,7 +159,7 @@ object VoIPAppRegistry {
         val pm = context.packageManager
         val installedApps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
         
-        return installedApps
+        val voipApps = installedApps
             .filter { app ->
                 // Check if it's a Communication app (API 26+)
                 val isCommunication = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -125,8 +183,20 @@ object VoIPAppRegistry {
                     )
                 }
             }
-            .sortedBy { it.displayName }
+            .toMutableList()
+        
+        // Add dialer for missed calls (hardcoded, always available)
+        voipApps.add(VoIPAppConfig(
+            packageName = DIALER_CALIBRATION_KEY,
+            displayName = "Τηλέφωνο (Αναπάντητες)",
+            deepLinkScheme = ""
+        ))
+        
+        return voipApps.sortedBy { it.displayName }
     }
+    
+    // Key for storing dialer calibration
+    const val DIALER_CALIBRATION_KEY = "dialer.missedcalls"
     
     /**
      * Get fully configured app (with calibration data if available).

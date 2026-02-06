@@ -165,10 +165,13 @@ object ContactRepository {
 
     /**
      * Clear the contact cache
+     * 
+     * Uses commit() instead of apply() to ensure cache is cleared
+     * before process kill during nuke reset
      */
     fun clearCache(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().clear().apply()
+        prefs.edit().clear().commit()  // commit() is synchronous - must complete before nuke kills process
         Log.i(TAG, "Contact cache cleared")
     }
 

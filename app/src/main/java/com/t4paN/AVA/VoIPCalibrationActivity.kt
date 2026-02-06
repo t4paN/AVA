@@ -54,10 +54,13 @@ class VoIPCalibrationActivity : AppCompatActivity() {
     private var selectedY: Float = -1f
     private var waitTimeSeconds: Int = 3
     
+    // Multi-step calibration
+    private val calibrationSteps = mutableListOf<CalibrationStep>()
+    
     // Views
     private lateinit var appListContainer: LinearLayout
     private lateinit var appListView: ListView
-    private lateinit var calibrationContainer: LinearLayout
+    private lateinit var calibrationContainer: View
     private lateinit var screenshotImageView: ImageView
     private lateinit var purpleDotView: View
     private lateinit var instructionText: TextView
@@ -67,6 +70,13 @@ class VoIPCalibrationActivity : AppCompatActivity() {
     private lateinit var saveButton: Button
     private lateinit var cancelButton: Button
     private lateinit var pickScreenshotButton: Button
+    private lateinit var controlsPanel: View
+    private lateinit var dragHandle: View
+    private lateinit var addStepButton: Button
+    
+    // Drag state
+    private var dragStartY = 0f
+    private var panelStartY = 0f
     
     // Photo picker launcher
     private val photoPickerLauncher = registerForActivityResult(
@@ -118,6 +128,28 @@ class VoIPCalibrationActivity : AppCompatActivity() {
         saveButton = findViewById(R.id.saveButton)
         cancelButton = findViewById(R.id.cancelButton)
         pickScreenshotButton = findViewById(R.id.pickScreenshotButton)
+        controlsPanel = findViewById(R.id.controlsPanel)
+        dragHandle = findViewById(R.id.dragHandle)
+        
+        // Drag handle for moving controls panel
+        controlsPanel.setOnTouchListener { view, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragStartY = event.rawY
+                    panelStartY = view.translationY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaY = event.rawY - dragStartY
+                    val newY = panelStartY + deltaY
+                    // Constrain: can't go below screen, can't go above top
+                    val maxUp = -(view.height.toFloat() - 100) // Leave 100px visible
+                    view.translationY = newY.coerceIn(maxUp, 0f)
+                    true
+                }
+                else -> false
+            }
+        }
         
         // Wait time controls
         waitTimeInput.setText(waitTimeSeconds.toString())
@@ -146,6 +178,13 @@ class VoIPCalibrationActivity : AppCompatActivity() {
         
         // Pick screenshot button
         pickScreenshotButton.setOnClickListener {
+            photoPickerLauncher.launch("image/*")
+        }
+        
+        addStepButton = findViewById(R.id.addStepButton)
+        addStepButton.setOnClickListener {
+            // Save current step and pick new screenshot
+            addCurrentStep()
             photoPickerLauncher.launch("image/*")
         }
         
@@ -199,8 +238,10 @@ class VoIPCalibrationActivity : AppCompatActivity() {
         appListContainer.visibility = View.VISIBLE
         calibrationContainer.visibility = View.GONE
         purpleDotView.visibility = View.GONE
+        addStepButton.visibility = View.GONE
         selectedX = -1f
         selectedY = -1f
+        calibrationSteps.clear()
         capturedBitmap?.recycle()
         capturedBitmap = null
     }
@@ -209,10 +250,18 @@ class VoIPCalibrationActivity : AppCompatActivity() {
         selectedApp = app
         Log.i(TAG, "Selected app: ${app.displayName}")
         
+        // Different instructions for dialer vs VoIP apps
+        val isDialer = app.packageName == VoIPAppRegistry.DIALER_CALIBRATION_KEY
+        val instructions = if (isDialer) {
+            "1. Ανοίξτε την εφαρμογή Τηλέφωνο\n2. Πηγαίνετε στο πληκτρολόγιο κλήσης\n3. Τραβήξτε screenshot (Power + Volume Down)\n4. Επιστρέψτε εδώ και επιλέξτε το screenshot"
+        } else {
+            "1. Ανοίξτε το ${app.displayName}\n2. Πηγαίνετε στην οθόνη κλήσης μιας επαφής\n3. Τραβήξτε screenshot (Power + Volume Down)\n4. Επιστρέψτε εδώ και επιλέξτε το screenshot"
+        }
+        
         // Show instructions dialog then open photo picker
         AlertDialog.Builder(this)
             .setTitle("Οδηγίες")
-            .setMessage("1. Ανοίξτε το ${app.displayName}\n2. Πηγαίνετε στην οθόνη κλήσης μιας επαφής\n3. Τραβήξτε screenshot (Power + Volume Down)\n4. Επιστρέψτε εδώ και επιλέξτε το screenshot")
+            .setMessage(instructions)
             .setPositiveButton("Επιλογή Screenshot") { _, _ ->
                 photoPickerLauncher.launch("image/*")
             }
@@ -255,7 +304,13 @@ class VoIPCalibrationActivity : AppCompatActivity() {
             screenshotImageView.setImageBitmap(desaturated)
         }
         
-        instructionText.setText(R.string.voip_calibration_tap_instruction)
+        // Different tap instruction for dialer
+        val isDialer = selectedApp?.packageName == VoIPAppRegistry.DIALER_CALIBRATION_KEY
+        if (isDialer) {
+            instructionText.text = "Πατήστε στο εικονίδιο \"Αρχική\" για πρόσβαση στις κλήσεις"
+        } else {
+            instructionText.setText(R.string.voip_calibration_tap_instruction)
+        }
         saveButton.isEnabled = false
     }
     
@@ -292,6 +347,39 @@ class VoIPCalibrationActivity : AppCompatActivity() {
         showPurpleDot(viewX, viewY)
         
         saveButton.isEnabled = true
+        addStepButton.visibility = View.VISIBLE  // Show "+" button after first tap
+    }
+    
+    /**
+     * Add current position as a calibration step
+     */
+    private fun addCurrentStep() {
+        if (selectedX < 0 || selectedY < 0) return
+        
+        waitTimeSeconds = waitTimeInput.text.toString().toIntOrNull() ?: 3
+        waitTimeSeconds = waitTimeSeconds.coerceIn(1, 10)
+        
+        val screenshotPath = saveScreenshotToFile("${selectedApp?.packageName}_step${calibrationSteps.size}")
+        
+        val step = CalibrationStep(
+            clickX = selectedX,
+            clickY = selectedY,
+            waitTimeMs = waitTimeSeconds * 1000L,
+            screenshotPath = screenshotPath
+        )
+        calibrationSteps.add(step)
+        
+        Log.i(TAG, "Added step ${calibrationSteps.size}: ($selectedX, $selectedY)")
+        
+        // Reset for next step
+        selectedX = -1f
+        selectedY = -1f
+        purpleDotView.visibility = View.GONE
+        addStepButton.visibility = View.GONE
+        saveButton.isEnabled = false
+        
+        // Update instruction
+        instructionText.text = "Βήμα ${calibrationSteps.size + 1}: Πατήστε στο επόμενο κουμπί"
     }
     
     private fun showPurpleDot(x: Float, y: Float) {
@@ -309,32 +397,27 @@ class VoIPCalibrationActivity : AppCompatActivity() {
     private fun saveCalibration() {
         val app = selectedApp ?: return
         
-        if (selectedX < 0 || selectedY < 0) {
+        // Add final step if there's a pending selection
+        if (selectedX >= 0 && selectedY >= 0) {
+            addCurrentStep()
+        }
+        
+        if (calibrationSteps.isEmpty()) {
             Toast.makeText(this, "Πατήστε στο κουμπί κλήσης πρώτα", Toast.LENGTH_SHORT).show()
             return
         }
         
-        // Parse wait time
-        waitTimeSeconds = waitTimeInput.text.toString().toIntOrNull() ?: 3
-        waitTimeSeconds = waitTimeSeconds.coerceIn(1, 10)
-        
-        // Save screenshot to internal storage
-        val screenshotPath = saveScreenshotToFile(app.packageName)
-        
-        // Create updated config
+        // Create updated config with all steps
         val config = VoIPAppConfig(
             packageName = app.packageName,
             displayName = app.displayName,
             deepLinkScheme = app.deepLinkScheme,
-            clickX = selectedX,
-            clickY = selectedY,
-            waitTimeMs = waitTimeSeconds * 1000L,
-            screenshotPath = screenshotPath
+            steps = calibrationSteps.toList()
         )
         
         VoIPAppRegistry.saveConfig(this, config)
         
-        Log.i(TAG, "Saved calibration for ${app.displayName}: ($selectedX, $selectedY), wait=${waitTimeSeconds}s")
+        Log.i(TAG, "Saved calibration for ${app.displayName}: ${calibrationSteps.size} steps")
         
         Toast.makeText(this, R.string.voip_calibration_success, Toast.LENGTH_SHORT).show()
         finish()

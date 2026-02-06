@@ -714,6 +714,25 @@ class RecordingService : Service() {
                     RadioActivity.launch(this@RecordingService)
                 }
             }
+            SuperFuzzyContactMatcher.Intent.MISSED_CALLS -> {
+                Log.i(TAG, "MISSED_CALLS intent detected")
+
+                val logEntry = TranscriptionLog(
+                    originalTranscript = transcriptionText,
+                    fuzzifiedTranscript = fuzzifiedTranscript,
+                    transcriptionTimeMs = transcriptionTime,
+                    matchedContact = "MISSED_CALLS",
+                    confidence = 1.0,
+                    confidenceBreakdown = "Missed calls command recognized"
+                )
+                addLogEntry(logEntry)
+
+                handler.post {
+                    CallOverlayController.dismiss()
+                    AVAAccessibilityService.instance?.launchDialerAndScrape(this@RecordingService)
+                        ?: Log.e(TAG, "AccessibilityService not running")
+                }
+            }
 
             null -> {
                 Log.w(TAG, "No intent detected")
@@ -730,8 +749,13 @@ class RecordingService : Service() {
                 addLogEntry(logEntry)
 
                 handler.post {
-                    safeToast("No command detected")
-                    TtsManager.speak("Δεν αναγνωρίστηκε εντολή", "no_intent")
+                    vibrateShort()
+                    TtsManager.speak("Δεν σας κατάλαβα", "no_intent")
+                    // Autocancel after TTS completes (~1.5s for this phrase)
+                    handler.postDelayed({
+                        CallOverlayController.dismiss()
+                        sessionInProgress = false
+                    }, 1500)
                 }
             }
         }
@@ -841,12 +865,13 @@ class RecordingService : Service() {
                 addLogEntry(logEntry)
 
                 handler.post {
-                    safeToast("No contact match found")
-                }
-
-                // Speak "not found" in Greek
-                handler.post {
+                    vibrateShort()
                     TtsManager.speak("Δεν βρέθηκε επαφή", "not_found")
+                    // Autocancel after TTS completes (~1.5s for this phrase)
+                    handler.postDelayed({
+                        CallOverlayController.dismiss()
+                        sessionInProgress = false
+                    }, 1500)
                 }
             }
         }
@@ -876,6 +901,10 @@ class RecordingService : Service() {
      */
     private fun nukeAppProcess() {
         try {
+            // Clear contact cache so restart gets fresh contacts from device
+            ContactRepository.clearCache(this)
+            Log.d(TAG, "Contact cache cleared before nuke")
+
             // Reset both engines
             resetWhisperEngine()
             TtsManager.reset()
@@ -1015,6 +1044,9 @@ class RecordingService : Service() {
         // Reset flags for new session
         isCancelled = false
         sessionInProgress = true
+
+        // Buzz on widget activation
+        vibrateShort()
 
         // Show cancel overlay via controller
         CallOverlayController.showRecording {
