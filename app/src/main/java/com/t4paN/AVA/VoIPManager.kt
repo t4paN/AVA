@@ -59,10 +59,12 @@ object VoIPManager {
 
         Log.i(TAG, "Placing call via ${config.displayName} to $phoneNumber")
 
-        // Capture everything we need from context (no context stored)
-        val displayMetrics = context.resources.displayMetrics
-        screenWidth = displayMetrics.widthPixels
-        screenHeight = displayMetrics.heightPixels
+        // Capture everything we need from context (no context stored).
+        // Full display size, not the app-usable area — calibration fractions come
+        // from a screenshot, which includes the system bars.
+        val (w, h) = ScreenMetrics.realSize(context)
+        screenWidth = w
+        screenHeight = h
         autoClickEnabled = isAutoClickEnabled(context)
 
         // Store config values

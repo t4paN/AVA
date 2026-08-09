@@ -84,10 +84,10 @@ object VoIPAutoClickManager {
         }
         handler.postDelayed(timeoutRunnable!!, CLICK_TIMEOUT_MS)
         
-        // Convert relative coords to absolute pixels
-        val displayMetrics = context.resources.displayMetrics
-        val absX = (x * displayMetrics.widthPixels).toInt()
-        val absY = (y * displayMetrics.heightPixels).toInt()
+        // Convert relative coords to absolute pixels against the full display
+        val (screenW, screenH) = ScreenMetrics.realSize(context)
+        val absX = (x * screenW).toInt()
+        val absY = (y * screenH).toInt()
         
         Log.d(TAG, "Requesting click at absolute ($absX, $absY)")
         
