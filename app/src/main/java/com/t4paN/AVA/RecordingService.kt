@@ -60,6 +60,10 @@ class RecordingService : Service() {
     private var onlineStartMs = 0L
     private var onlineBusyRetried = false
 
+    // Set when the Whisper model is absent entirely (not bundled, not downloaded),
+    // so the failure can be reported as "download the model" rather than a generic error.
+    private var modelMissing = false
+
     // Timeout runnable as a field so we can cancel it specifically
     private val timeoutRunnable = Runnable {
         Log.d(TAG, "4-second timeout reached")
@@ -554,6 +558,15 @@ class RecordingService : Service() {
             Log.d(TAG, "First-time Whisper initialization...")
             try {
                 val modelPath = ModelManager.getModelPath(this)
+                if (modelPath == null) {
+                    // Builds that don't bundle the model (CI / Play Store) until the
+                    // caregiver downloads it once from the settings screen. Say so out
+                    // loud — this used to fail silently and the user just got nothing.
+                    Log.e(TAG, "No Whisper model available — cannot transcribe offline")
+                    modelMissing = true
+                    return
+                }
+                modelMissing = false
                 val vocabPath = ModelManager.getVocabPath(this)
 
                 Log.d(TAG, "Using model: $modelPath")
@@ -795,6 +808,32 @@ class RecordingService : Service() {
                     val maxAmp = audioSamples.maxOrNull() ?: 0f
                     val minAmp = audioSamples.minOrNull() ?: 0f
                     Log.d(TAG, "Audio amplitude range: [$minAmp, $maxAmp]")
+                }
+
+                // Without an engine every path below yields "" and the session ends
+                // with no feedback at all — indistinguishable from "I wasn't heard".
+                // Builds that don't bundle the model land here until it's downloaded.
+                if (sharedWhisperEngine == null) {
+                    Log.e(TAG, "No Whisper engine available, aborting transcription")
+                    addLogEntry(
+                        TranscriptionLog(
+                            originalTranscript = if (modelMissing) "(model missing)" else "(engine unavailable)",
+                            fuzzifiedTranscript = "",
+                            transcriptionTimeMs = 0,
+                            matchedContact = null,
+                            confidence = null,
+                            confidenceBreakdown = null
+                        )
+                    )
+                    handler.post {
+                        TtsManager.speak(
+                            if (modelMissing) "Λείπει το μοντέλο ομιλίας. Κάντε λήψη από τις ρυθμίσεις."
+                            else "Σφάλμα αναγνώρισης ομιλίας",
+                            "model_missing"
+                        )
+                        CallOverlayController.dismiss()
+                    }
+                    return@Thread
                 }
 
                 val startTime = System.currentTimeMillis()

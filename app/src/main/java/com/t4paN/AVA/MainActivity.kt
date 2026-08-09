@@ -88,6 +88,41 @@ class MainActivity : AppCompatActivity() {
         val unlockReceiver = UnlockReceiver()
         val filter = IntentFilter(Intent.ACTION_USER_PRESENT)
         registerReceiver(unlockReceiver, filter)
+
+        promptForBaseModelIfMissing()
+    }
+
+    /**
+     * Builds that don't bundle whisper-base in assets (CI / Play Store) cannot
+     * transcribe until the model is fetched once. Prompt rather than downloading
+     * silently: it's ~100MB and the user may be on mobile data.
+     */
+    private fun promptForBaseModelIfMissing() {
+        if (ModelManager.isBaseModelReady(this)) return
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Απαιτείται μοντέλο ομιλίας")
+            .setMessage(
+                "Για να λειτουργήσει η αναγνώριση φωνής χωρίς σύνδεση, " +
+                "χρειάζεται λήψη ενός αρχείου περίπου 100 MB. " +
+                "Συνιστάται σύνδεση Wi-Fi."
+            )
+            .setPositiveButton("Λήψη τώρα") { _, _ -> downloadBaseModel() }
+            .setNegativeButton("Αργότερα", null)
+            .show()
+    }
+
+    private fun downloadBaseModel() {
+        ModelManager.downloadBaseModel(this,
+            onComplete = {
+                invalidateOptionsMenu()
+                Snackbar.make(binding.root, "Το μοντέλο είναι έτοιμο", Snackbar.LENGTH_SHORT).show()
+                restartWhisperEngine()
+            },
+            onError = { error ->
+                Snackbar.make(binding.root, "Η λήψη απέτυχε: $error", Snackbar.LENGTH_LONG).show()
+            }
+        )
     }
 
     private fun requestPermissionsIfNeeded() {
@@ -244,6 +279,10 @@ class MainActivity : AppCompatActivity() {
         onlineItem.title = if (onlineEnabled) "Online recognition: ON" else "Online recognition: OFF"
         onlineItem.isChecked = onlineEnabled
 
+        // Only offer the base-model download on builds that need it — hidden
+        // entirely when the model is bundled in assets or already fetched.
+        menu.findItem(R.id.action_download_model).isVisible = !ModelManager.isBaseModelReady(this)
+
         return super.onPrepareOptionsMenu(menu)
     }
 
@@ -322,6 +361,11 @@ class MainActivity : AppCompatActivity() {
                     if (newValue) "Online recognition enabled (uses network, sends audio to Google)"
                     else "Online recognition disabled (on-device Whisper)",
                     Snackbar.LENGTH_LONG).show()
+                true
+            }
+
+            R.id.action_download_model -> {
+                downloadBaseModel()
                 true
             }
 

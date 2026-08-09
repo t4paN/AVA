@@ -48,7 +48,9 @@ The matcher is forgiving: a leading command-ish word followed by a name is treat
 
 ### Building the APK
 
-The Whisper model is **not** committed to the repo (model files are git-ignored), so you must add it before building:
+The Whisper model is **not** committed to the repo (model files are git-ignored). You can either bundle it at build time or let the app fetch it on first run.
+
+**Bundling it (recommended for local builds — the app then works fully offline from the first launch):**
 
 1. Clone the repository
 2. Download **`whisper-base.TOP_WORLD.tflite`** from [DocWolle/whisper_tflite_models](https://huggingface.co/DocWolle/whisper_tflite_models/tree/main)
@@ -58,6 +60,8 @@ The Whisper model is **not** committed to the repo (model files are git-ignored)
    ./gradlew assembleRelease
    ```
    The APK will be in `app/build/outputs/apk/release/`.
+
+**Without bundling it** (CI builds, and any APK built from a clean clone): the app detects the missing model on first launch and offers to download it (~100 MB) from the same HuggingFace repo. It can also be triggered later from the menu (⋮ → *Λήψη μοντέλου ομιλίας*), which only appears while the model is absent. Until the model is present, offline transcription cannot run and AVA says so out loud rather than failing silently — though **Online recognition** mode works without it.
 
 Building `:whisper_native` requires the Android **NDK and CMake** (native ABIs: `armeabi-v7a`, `arm64-v8a`).
 
