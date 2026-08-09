@@ -13,13 +13,19 @@ import android.content.IntentFilter
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -48,6 +54,11 @@ class RecordingService : Service() {
 
     // Cancel flag
     private var isCancelled = false
+
+    // Online (Google) recognition — optional, opt-in, one engine per session
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var onlineStartMs = 0L
+    private var onlineBusyRetried = false
 
     // Timeout runnable as a field so we can cancel it specifically
     private val timeoutRunnable = Runnable {
@@ -294,7 +305,7 @@ class RecordingService : Service() {
                 if (utteranceId == "prompt") {
                     handler.post {
                         if (!isCancelled && isServiceAlive) {
-                            vibrateAndStartRecording()
+                            chooseEngineAndStart()
                         }
                     }
                 }
@@ -306,7 +317,7 @@ class RecordingService : Service() {
                 if (utteranceId == "prompt") {
                     handler.post {
                         if (!isCancelled && isServiceAlive) {
-                            vibrateAndStartRecording()
+                            chooseEngineAndStart()
                         }
                     }
                 }
@@ -317,7 +328,7 @@ class RecordingService : Service() {
             TtsManager.speak("Πείτε όνομα", "prompt")
         } else {
             Log.w(TAG, "TTS not ready, skipping prompt")
-            vibrateAndStartRecording()
+            chooseEngineAndStart()
         }
     }
 
@@ -341,6 +352,192 @@ class RecordingService : Service() {
                 prepareRecorder()
             }
         }, 50)
+    }
+
+    // ============================================================================
+    // Online (Google) recognition path — opt-in, network-backed, Whisper fallback.
+    // Strategy switch at session start: pick ONE engine. Never overlap AudioRecord
+    // and SpeechRecognizer (mic contention).
+    // ============================================================================
+
+    /**
+     * Called once the TTS prompt has finished. Picks the engine for THIS session.
+     */
+    private fun chooseEngineAndStart() {
+        onlineBusyRetried = false
+        if (shouldUseOnline()) {
+            startOnlineRecognition()
+        } else {
+            vibrateAndStartRecording()
+        }
+    }
+
+    private fun shouldUseOnline(): Boolean {
+        val enabled = getSharedPreferences("ava_settings", MODE_PRIVATE)
+            .getBoolean("online_recognition_enabled", false)
+        return enabled && isNetworkAvailable() && SpeechRecognizer.isRecognitionAvailable(this)
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(network) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } catch (e: Exception) {
+            Log.e(TAG, "Network check failed", e)
+            false
+        }
+    }
+
+    /**
+     * Start Google's SpeechRecognizer. MUST run on the main thread (it is — called
+     * from the TTS onDone handler.post / handler callbacks). The recognizer takes
+     * over the mic and does its own capture + endpointing; it plays its own
+     * start/stop tones, so we drop the manual beep here (haptic cue only).
+     */
+    private fun startOnlineRecognition() {
+        if (isCancelled || !isServiceAlive) return
+        Log.d(TAG, "Starting ONLINE recognition (Google SpeechRecognizer, el-GR)")
+
+        vibrateShort()
+
+        try {
+            destroyRecognizer()
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
+                setRecognitionListener(onlineListener)
+            }
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "el-GR")
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            }
+            onlineStartMs = System.currentTimeMillis()
+            speechRecognizer?.startListening(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start online recognition, falling back to Whisper", e)
+            recueAndFallbackToWhisper()
+        }
+    }
+
+    private val onlineListener = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {}
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onPartialResults(partialResults: Bundle?) {}
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+
+        override fun onResults(results: Bundle?) {
+            if (isCancelled || !isServiceAlive) return
+            val elapsed = System.currentTimeMillis() - onlineStartMs
+            val text = results
+                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+                ?.trim()
+            destroyRecognizer()
+            Log.d(TAG, "Online result: '$text' (${elapsed}ms)")
+
+            if (!text.isNullOrEmpty()) {
+                // Converge on the exact same downstream path as Whisper.
+                handleTranscriptionComplete(text, elapsed)
+                sessionInProgress = false
+            } else {
+                logOnlineTerminal("(empty)", elapsed)
+                handler.post {
+                    safeToast("Transcription was empty!")
+                    CallOverlayController.dismiss()
+                }
+            }
+        }
+
+        override fun onError(error: Int) {
+            if (isCancelled || !isServiceAlive) return
+            Log.w(TAG, "Online recognition error: $error")
+            when (error) {
+                SpeechRecognizer.ERROR_NO_MATCH,
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                    // No speech — treat like the Whisper "(no speech detected)" path.
+                    destroyRecognizer()
+                    logOnlineTerminal("(no speech detected)", 0)
+                    handler.post {
+                        safeToast("No speech detected")
+                        CallOverlayController.dismiss()
+                    }
+                }
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
+                    // Recreate once; if it recurs, fall back to Whisper.
+                    if (!onlineBusyRetried) {
+                        onlineBusyRetried = true
+                        destroyRecognizer()
+                        handler.postDelayed({
+                            if (!isCancelled && isServiceAlive) startOnlineRecognition()
+                        }, 150)
+                    } else {
+                        recueAndFallbackToWhisper()
+                    }
+                }
+                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
+                    // RECORD_AUDIO missing — same handling as prepareRecorder().
+                    destroyRecognizer()
+                    sessionInProgress = false
+                    handler.post {
+                        safeToast("Microphone permission required")
+                        CallOverlayController.dismiss()
+                    }
+                }
+                else -> {
+                    // NETWORK / NETWORK_TIMEOUT / SERVER / SERVER_DISCONNECTED /
+                    // CLIENT / AUDIO / LANGUAGE_UNAVAILABLE / LANGUAGE_NOT_SUPPORTED
+                    // → fall back to Whisper for this session (re-record).
+                    recueAndFallbackToWhisper()
+                }
+            }
+        }
+    }
+
+    /**
+     * Mid-session fallback: the recognizer gives us no raw audio, so the user must
+     * speak again. vibrateAndStartRecording() re-cues (beep + haptic) and runs the
+     * unchanged Whisper capture path.
+     */
+    private fun recueAndFallbackToWhisper() {
+        destroyRecognizer()
+        if (isCancelled || !isServiceAlive) return
+        Log.i(TAG, "Falling back to Whisper capture for this session")
+        handler.post {
+            if (!isCancelled && isServiceAlive) {
+                vibrateAndStartRecording()
+            }
+        }
+    }
+
+    private fun logOnlineTerminal(label: String, elapsed: Long) {
+        addLogEntry(
+            TranscriptionLog(
+                originalTranscript = label,
+                fuzzifiedTranscript = label,
+                transcriptionTimeMs = elapsed,
+                matchedContact = null,
+                confidence = null,
+                confidenceBreakdown = null
+            )
+        )
+        sessionInProgress = false
+    }
+
+    /** Destroy the SpeechRecognizer on the main thread and null it out. */
+    private fun destroyRecognizer() {
+        try {
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error destroying SpeechRecognizer", e)
+        }
+        speechRecognizer = null
     }
 
     /**
@@ -964,6 +1161,9 @@ class RecordingService : Service() {
         // Stop TTS via manager
         TtsManager.stop()
 
+        // Stop online recognizer if active (main thread — we're already on it)
+        destroyRecognizer()
+
         // Stop recording
         isRecording = false
         isProcessing = false
@@ -1088,6 +1288,9 @@ class RecordingService : Service() {
 
         // Stop TTS but don't shutdown - keep it alive
         TtsManager.stop()
+
+        // Destroy online recognizer if any
+        destroyRecognizer()
 
         try {
             vadPipeline?.close()

@@ -238,6 +238,12 @@ class MainActivity : AppCompatActivity() {
         autoCallItem.title = if (autoCallEnabled) "Auto-call: ON" else "Auto-call: OFF"
         autoCallItem.isChecked = autoCallEnabled
 
+        // Update "Online recognition" menu item
+        val onlineEnabled = prefs.getBoolean("online_recognition_enabled", false)
+        val onlineItem = menu.findItem(R.id.action_toggle_online)
+        onlineItem.title = if (onlineEnabled) "Online recognition: ON" else "Online recognition: OFF"
+        onlineItem.isChecked = onlineEnabled
+
         return super.onPrepareOptionsMenu(menu)
     }
 
@@ -302,6 +308,19 @@ class MainActivity : AppCompatActivity() {
                 invalidateOptionsMenu()
                 Snackbar.make(binding.root,
                     if (newValue) "Auto-call enabled" else "Auto-call disabled (show confirmation)",
+                    Snackbar.LENGTH_LONG).show()
+                true
+            }
+
+            R.id.action_toggle_online -> {
+                val prefs = getSharedPreferences("ava_settings", MODE_PRIVATE)
+                val currentlyEnabled = prefs.getBoolean("online_recognition_enabled", false)
+                val newValue = !currentlyEnabled
+                prefs.edit().putBoolean("online_recognition_enabled", newValue).apply()
+                invalidateOptionsMenu()
+                Snackbar.make(binding.root,
+                    if (newValue) "Online recognition enabled (uses network, sends audio to Google)"
+                    else "Online recognition disabled (on-device Whisper)",
                     Snackbar.LENGTH_LONG).show()
                 true
             }

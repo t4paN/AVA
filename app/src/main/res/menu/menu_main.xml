@@ -22,6 +22,12 @@
         app:showAsAction="never" />
 
     <item
+        android:id="@+id/action_toggle_online"
+        android:orderInCategory="98"
+        android:title="Online recognition: OFF"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/action_settings"
         android:orderInCategory="102"
         android:title="@string/action_settings"
