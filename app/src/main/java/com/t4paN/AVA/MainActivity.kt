@@ -33,14 +33,21 @@ class MainActivity : AppCompatActivity() {
     private val permissions = arrayOf(
         Manifest.permission.RECORD_AUDIO,
         Manifest.permission.CALL_PHONE,
-        Manifest.permission.READ_CONTACTS
+        Manifest.permission.READ_CONTACTS,
+        Manifest.permission.READ_CALL_LOG
     )
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        val allGranted = results.all { it.value }
-        if (allGranted) {
+        // Keyed on RECORD_AUDIO alone: the others are needed for calling and for
+        // reading missed calls, but none of them affect whether Whisper can load,
+        // and requiring all of them meant one optional denial silently skipped the
+        // preload and made the first recording slow.
+        val micGranted = results[Manifest.permission.RECORD_AUDIO] ?: ContextCompat
+            .checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (micGranted) {
             preloadWhisper()
         }
     }

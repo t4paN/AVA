@@ -250,13 +250,8 @@ class VoIPCalibrationActivity : AppCompatActivity() {
         selectedApp = app
         Log.i(TAG, "Selected app: ${app.displayName}")
         
-        // Different instructions for dialer vs VoIP apps
-        val isDialer = app.packageName == VoIPAppRegistry.DIALER_CALIBRATION_KEY
-        val instructions = if (isDialer) {
-            "1. Ανοίξτε την εφαρμογή Τηλέφωνο\n2. Πηγαίνετε στο πληκτρολόγιο κλήσης\n3. Τραβήξτε screenshot (Power + Volume Down)\n4. Επιστρέψτε εδώ και επιλέξτε το screenshot"
-        } else {
+        val instructions =
             "1. Ανοίξτε το ${app.displayName}\n2. Πηγαίνετε στην οθόνη κλήσης μιας επαφής\n3. Τραβήξτε screenshot (Power + Volume Down)\n4. Επιστρέψτε εδώ και επιλέξτε το screenshot"
-        }
         
         // Show instructions dialog then open photo picker
         AlertDialog.Builder(this)
@@ -304,13 +299,7 @@ class VoIPCalibrationActivity : AppCompatActivity() {
             screenshotImageView.setImageBitmap(desaturated)
         }
         
-        // Different tap instruction for dialer
-        val isDialer = selectedApp?.packageName == VoIPAppRegistry.DIALER_CALIBRATION_KEY
-        if (isDialer) {
-            instructionText.text = "Πατήστε στο εικονίδιο \"Αρχική\" για πρόσβαση στις κλήσεις"
-        } else {
-            instructionText.setText(R.string.voip_calibration_tap_instruction)
-        }
+        instructionText.setText(R.string.voip_calibration_tap_instruction)
         saveButton.isEnabled = false
     }
     

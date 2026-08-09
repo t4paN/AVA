@@ -965,8 +965,9 @@ class RecordingService : Service() {
 
                 handler.post {
                     CallOverlayController.dismiss()
-                    AVAAccessibilityService.instance?.launchDialerAndScrape(this@RecordingService)
-                        ?: Log.e(TAG, "AccessibilityService not running")
+                    // Reads the call log directly — no dialer, no accessibility service,
+                    // so this no longer depends on per-device calibration.
+                    MissedCallsReader.announce(this@RecordingService)
                 }
             }
 

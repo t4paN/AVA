@@ -184,20 +184,13 @@ object VoIPAppRegistry {
                 }
             }
             .toMutableList()
-        
-        // Add dialer for missed calls (hardcoded, always available)
-        voipApps.add(VoIPAppConfig(
-            packageName = DIALER_CALIBRATION_KEY,
-            displayName = "Τηλέφωνο (Αναπάντητες)",
-            deepLinkScheme = ""
-        ))
-        
+
+        // The dialer used to be listed here so missed-calls playback could be
+        // calibrated by screenshot. MissedCallsReader queries CallLog instead, so
+        // there is nothing left to calibrate.
         return voipApps.sortedBy { it.displayName }
     }
-    
-    // Key for storing dialer calibration
-    const val DIALER_CALIBRATION_KEY = "dialer.missedcalls"
-    
+
     /**
      * Get fully configured app (with calibration data if available).
      */

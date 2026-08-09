@@ -10,7 +10,7 @@ Speech recognition runs **fully on-device** by default — no internet required.
 - **Fuzzy Contact Matching** — copes with heavily distorted transcriptions through phonetic normalization and weighted scoring
 - **Voice Calling** — places calls through the default dialer or a VoIP app
 - **VoIP Auto-Click** — an AccessibilityService taps the call button for you, using caregiver-calibrated positions (Viber is fully supported end-to-end; WhatsApp and Signal can be set as routing targets)
-- **Read Missed Calls** — AVA opens the dialer, reads the recent missed calls, and announces them aloud
+- **Read Missed Calls** — AVA reads recent missed calls from the call log and announces them aloud
 - **Magnifier & Flashlight** — turns the camera into a magnifier with the torch on
 - **Radio** — stream Greek radio stations by voice
 - **Audio-First UX** — Greek TTS announcements and vibration feedback at every step
@@ -77,7 +77,7 @@ Building `:whisper_native` requires the Android **NDK and CMake** (native ABIs: 
 
 1. **Display over other apps:** Settings → Apps → Special app access → Display over other apps → AVA → ON
 2. **Show notifications:** Settings → Notifications → AVA → ON
-3. **Accessibility Service** (required for VoIP auto-click and reading missed calls):
+3. **Accessibility Service** (required for VoIP auto-click only):
    - Settings → Accessibility → Installed services
    - You may need to enable "Allow downloaded apps" first
    - Find AVA → Toggle ON
@@ -87,6 +87,7 @@ Building `:whisper_native` requires the Android **NDK and CMake** (native ABIs: 
 - ✅ Microphone
 - ✅ Phone
 - ✅ Contacts
+- ✅ Call log (for reading missed calls)
 - ✅ Notifications
 - ✅ Display over other apps
 
@@ -114,8 +115,6 @@ To place calls through a VoIP app:
 - `Μαρία Κ WHATSAPP`
 - `Νίκος SIGNAL`
 
-The VoIP Setup screen also lets you calibrate the dialer for the **"αναπάντητες" (missed calls)** command.
-
 > **Channel support, precisely:** contacts can be routed to **Viber, WhatsApp, or Signal**. Auto-click (tapping the call button for the user) is currently wired end-to-end for **Viber** only; other channels deep-link into the app but do not yet auto-click.
 
 ## Settings
@@ -126,7 +125,7 @@ The VoIP Setup screen also lets you calibrate the dialer for the **"αναπάν
 | Fast Mode | ON = fast/less-accurate base model (bundled); OFF = slower/more-accurate small model (~305 MB download) |
 | Online recognition | **Default OFF.** ON = transcribe with Google's built-in speech recognizer (`el-GR`) instead of Whisper — usually more accurate on real speech, but **requires a network and sends audio to Google**. On-device Whisper stays the automatic fallback (no network, or if the recognizer errors), so the call button never dies offline. |
 | Autocall | Automatically place the call when the match is confident (OFF = show a confirm button) |
-| VoIP Setup | Configure auto-click positions and dialer calibration |
+| VoIP Setup | Configure auto-click positions |
 | Σταθμοί Ραδιοφώνου | Add or remove radio stations |
 
 The **reset button** (floating button on the main screen) fully restarts AVA and reloads contacts from the device — use it after adding or renaming contacts, since AVA caches them.
