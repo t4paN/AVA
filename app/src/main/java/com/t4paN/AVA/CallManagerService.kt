@@ -55,6 +55,16 @@ class CallManagerService : Service() {
         // Timing
         private const val POST_TTS_BUFFER_MS = 500L
 
+        // Watching a placed call so the user can be returned to the home screen
+        // when it ends. Without this they are left sitting in Viber, where a
+        // stray tap can start a call they never meant to make.
+        private const val CALL_WATCH_INTERVAL_MS = 2_000L
+        // If no call has started by now, one never will — stop watching quietly.
+        private const val CALL_START_GRACE_MS = 12_000L
+        // Hard ceiling, so a stuck audio mode can never keep the service alive
+        // indefinitely. Long enough for a real family call abroad.
+        private const val CALL_WATCH_MAX_MS = 60 * 60 * 1_000L
+
         // TTS Speech rates
         private const val TTS_RATE_NORMAL = 1.0f
         private const val TTS_RATE_SLOW = 0.75f
@@ -315,10 +325,9 @@ class CallManagerService : Service() {
             placeVoIPCall(voipPackage, number)
         } else {
             // Regular phone call
-            placeRegularCall(number)
-            handler.postDelayed({
-                cleanup()
-            }, 800)
+            if (placeRegularCall(number)) {
+                startCallEndWatch()
+            }
         }
     }
 
@@ -339,7 +348,9 @@ class CallManagerService : Service() {
             }
             Log.w(TAG, "$appName not installed, falling back to regular call")
             speakError("$appName δεν είναι εγκατεστημένο")
-            placeRegularCall(number)
+            if (placeRegularCall(number)) {
+                startCallEndWatch()
+            }
             return
         }
 
@@ -352,9 +363,8 @@ class CallManagerService : Service() {
             phoneNumber = number,
             onSuccess = {
                 Log.i(TAG, "VoIP call initiated successfully")
-                // Just stop the service quietly - don't cancel polling
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                // Stay alive for the call so the user gets taken home afterwards.
+                startCallEndWatch()
             },
             onFailure = { errorMessage ->
                 Log.w(TAG, "VoIP call failed: $errorMessage")
@@ -365,7 +375,11 @@ class CallManagerService : Service() {
         )
     }
 
-    private fun placeRegularCall(number: String) {
+    /**
+     * Returns true when the dial intent was actually fired, so the caller knows
+     * whether there is a call worth watching.
+     */
+    private fun placeRegularCall(number: String): Boolean {
         Log.d(TAG, "Placing regular call to $number")
 
         try {
@@ -377,6 +391,7 @@ class CallManagerService : Service() {
             if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CALL_PHONE)
                 == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 startActivity(callIntent)
+                return true
             } else {
                 Log.e(TAG, "CALL_PHONE permission not granted")
                 speakError("Δεν έχω άδεια για κλήσεις")
@@ -387,6 +402,7 @@ class CallManagerService : Service() {
             speakError("Σφάλμα κλήσης")
             cleanup()
         }
+        return false
     }
 
     /**
@@ -557,6 +573,88 @@ class CallManagerService : Service() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Vibration error", e)
+        }
+    }
+
+    /**
+     * Watch a call through to its end, then put the user back on the home screen.
+     *
+     * The audio mode is the signal: MODE_IN_COMMUNICATION for VoIP, MODE_IN_CALL
+     * for a regular call, back to MODE_NORMAL when it is over. Reading it needs no
+     * permission, which is the point — the AccessibilityService used to supply
+     * this and no longer exists.
+     *
+     * Going home cannot be done directly to someone else's app: the only
+     * permission-free route is launching the launcher, and background activity
+     * launches are refused unless this process counts as foreground. That is
+     * exactly why the service stays up for the duration rather than stopping the
+     * moment the call connects.
+     */
+    private fun startCallEndWatch() {
+        val audio = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        if (audio == null) {
+            Log.w(TAG, "No AudioManager - cannot watch the call, stopping now")
+            cleanup()
+            return
+        }
+
+        currentPhase = CallPhase.CALLING
+        var elapsed = 0L
+        var callStarted = false
+
+        val watch = object : Runnable {
+            override fun run() {
+                elapsed += CALL_WATCH_INTERVAL_MS
+                val mode = audio.mode
+                val inCall = mode == AudioManager.MODE_IN_CALL ||
+                        mode == AudioManager.MODE_IN_COMMUNICATION
+
+                when {
+                    inCall -> {
+                        if (!callStarted) {
+                            Log.i(TAG, "Call is live (audio mode $mode) - watching for its end")
+                            callStarted = true
+                        }
+                    }
+
+                    callStarted -> {
+                        Log.i(TAG, "Call ended after ${elapsed}ms - going home")
+                        goHome()
+                        cleanup()
+                        return
+                    }
+
+                    elapsed >= CALL_START_GRACE_MS -> {
+                        Log.i(TAG, "No call started within ${CALL_START_GRACE_MS}ms - standing down")
+                        cleanup()
+                        return
+                    }
+                }
+
+                if (elapsed >= CALL_WATCH_MAX_MS) {
+                    Log.w(TAG, "Call watch hit its ${CALL_WATCH_MAX_MS}ms ceiling - standing down")
+                    cleanup()
+                    return
+                }
+
+                handler.postDelayed(this, CALL_WATCH_INTERVAL_MS)
+            }
+        }
+        handler.postDelayed(watch, CALL_WATCH_INTERVAL_MS)
+    }
+
+    /**
+     * Send the user back to the launcher, so the widget is one tap away and a
+     * stray tap inside the messenger cannot start an unintended call.
+     */
+    private fun goHome() {
+        try {
+            startActivity(Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            })
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not return to the home screen", e)
         }
     }
 
