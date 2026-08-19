@@ -65,6 +65,8 @@ The Whisper model is **not** committed to the repo (model files are git-ignored)
 
 Building `:whisper_native` requires the Android **NDK and CMake** (native ABIs: `armeabi-v7a`, `arm64-v8a`).
 
+`assembleRelease` produces an **unsigned** APK unless a signing key is supplied. For signed, distributable builds — and the tag-driven GitHub Actions workflow that publishes them — see **[docs/RELEASING.md](docs/RELEASING.md)**.
+
 ### Install on Device
 
 1. Transfer the APK to the device

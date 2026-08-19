@@ -3,6 +3,15 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
+// --- Release signing --------------------------------------------------------
+// The upload keystore is never committed. CI decodes it from the
+// AVA_KEYSTORE_BASE64 repository secret and points AVA_KEYSTORE_FILE at the
+// decoded file; locally, export AVA_KEYSTORE_FILE at your own copy
+// (~/ADMINSTUFF/ava-upload-key/ava-upload.jks on the taptop).
+// With no keystore present the release build still assembles, just unsigned,
+// so a fresh clone never breaks.
+val avaKeystore = System.getenv("AVA_KEYSTORE_FILE")?.let(::file)?.takeIf { it.exists() }
+
 android {
     namespace = "com.t4paN.AVA"
     compileSdk = 36
@@ -17,13 +26,38 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (avaKeystore != null) {
+            create("release") {
+                storeFile = avaKeystore
+                storePassword = System.getenv("AVA_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("AVA_KEY_ALIAS") ?: "ava-upload"
+                keyPassword = System.getenv("AVA_KEY_PASSWORD")
+                    ?: System.getenv("AVA_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // R8 stays off: the Whisper engine is reached through JNI and the
+            // TFLite interpreter resolves classes reflectively, so shrinking
+            // needs its own keep rules and its own device test before it can
+            // be turned on. Bigger APK, no surprises.
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.findByName("release")
+
+            // Ship ARM only. The x86/x86_64 slices of libonnxruntime and the
+            // TFLite delegates exist for emulators, not phones, and cost ~35 MB
+            // in the sideloadable universal APK. Debug builds keep every ABI so
+            // the emulator still works.
+            ndk {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
         }
     }
     compileOptions {

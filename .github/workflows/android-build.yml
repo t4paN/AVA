@@ -1,8 +1,9 @@
 name: Android Build
 
 # Builds AVA on GitHub's runners so the heavy toolchain (NDK, CMake, Maven deps)
-# never has to be downloaded locally. See gtalk-HANDOFF.md for why this exists:
-# the online-recognition feature was written without a JDK available.
+# never has to be downloaded locally. Originally necessary — the online-recognition
+# feature was written on a machine with no JDK installed. The local toolchain works
+# now, so this is kept as a dogfooding check on every push.
 
 on:
   push:

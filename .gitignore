@@ -43,3 +43,7 @@ daemon/
 kotlin-profile/
 native/
 *.zip
+
+# Handoff / session notes — working files, never shipped
+*handoff.md
+*HANDOFF.md
