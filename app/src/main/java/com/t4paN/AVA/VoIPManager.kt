@@ -34,10 +34,17 @@ object VoIPManager {
     // launched first and the row follows once it has had time to initialise.
     // Success is then confirmed by watching the audio mode, which is what the
     // AccessibilityService used to do by spotting the call screen.
-    private const val WARMUP_DELAY_MS = 1400L
+    //
+    // The row is fired EXACTLY ONCE. An earlier version retried when no call had
+    // appeared after 3.5s, and on a cold Viber that dialled the contact twice:
+    // the first call was already going through, the audio mode simply had not
+    // flipped yet. Placing a call nobody asked for is the worst thing this app
+    // can do, so the warm-up gets enough time instead and a failure is reported
+    // rather than guessed at. Measured cold on a Galaxy A05s: 1400ms was too
+    // short, the call connected ~2.4s after a fire against a warm Viber.
+    private const val WARMUP_DELAY_MS = 3000L
     private const val POLL_INTERVAL_MS = 500L
-    private const val RETRY_AT_MS = 3500L
-    private const val GIVE_UP_AT_MS = 8000L
+    private const val GIVE_UP_AT_MS = 12_000L
 
     private val handler = Handler(Looper.getMainLooper())
     private var pendingRunnable: Runnable? = null
@@ -150,7 +157,6 @@ object VoIPManager {
         val warmup = if (VoIPDirectCall.warmUp(ctx, packageName)) WARMUP_DELAY_MS else 0L
         handler.postDelayed({ VoIPDirectCall.place(ctx, action) }, warmup)
 
-        var retried = false
         val poll = object : Runnable {
             var elapsed = warmup
             override fun run() {
@@ -170,14 +176,7 @@ object VoIPManager {
                     return
                 }
 
-                // One second chance. A messenger that was cold can swallow the
-                // first row while it is still starting up.
-                if (!retried && elapsed >= RETRY_AT_MS) {
-                    retried = true
-                    Log.i(TAG, "No call at ${elapsed}ms - firing the row once more")
-                    VoIPDirectCall.place(ctx, action)
-                }
-
+                // Deliberately no retry here. See WARMUP_DELAY_MS.
                 handler.postDelayed(this, POLL_INTERVAL_MS)
             }
         }
