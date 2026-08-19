@@ -16,6 +16,8 @@ import androidx.core.app.NotificationCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
 
 /**
@@ -105,7 +107,20 @@ class RadioPlayerService : Service() {
         
         currentStation = station
         
-        player = ExoPlayer.Builder(this).build().apply {
+        // Audio focus, so the radio yields instead of talking over a call.
+        // Handing focus handling to ExoPlayer covers both cellular calls and VoIP
+        // calls (Viber/WhatsApp/Signal all request focus), needs no extra
+        // permission, and resumes playback by itself once a transient interruption
+        // like a call is over.
+        player = ExoPlayer.Builder(this)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    .build(),
+                /* handleAudioFocus = */ true
+            )
+            .build().apply {
             setMediaItem(MediaItem.fromUri(station.streamUrl))
             
             addListener(object : Player.Listener {
