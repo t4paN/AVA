@@ -96,13 +96,17 @@ class MainActivity : AppCompatActivity() {
         val filter = IntentFilter(Intent.ACTION_USER_PRESENT)
         registerReceiver(unlockReceiver, filter)
 
-        promptForBaseModelIfMissing()
     }
 
     /**
-     * Builds that don't bundle whisper-base in assets (CI / Play Store) cannot
-     * transcribe until the model is fetched once. Prompt rather than downloading
-     * silently: it's ~100MB and the user may be on mobile data.
+     * Offer the ~100MB Whisper download, but only when the user has actually
+     * chosen offline recognition and the model is absent.
+     *
+     * This deliberately does NOT run at startup. Online recognition needs no
+     * model at all, so nagging every launch asks most users to fetch 100MB they
+     * will never use. If the model really is needed and missing, RecordingService
+     * says so out loud at the moment it matters — better for this audience than a
+     * dialog they cannot easily read.
      */
     private fun promptForBaseModelIfMissing() {
         if (ModelManager.isBaseModelReady(this)) return
@@ -317,7 +321,9 @@ class MainActivity : AppCompatActivity() {
         // Update "Online recognition" menu item
         val onlineEnabled = prefs.getBoolean("online_recognition_enabled", false)
         val onlineItem = menu.findItem(R.id.action_toggle_online)
-        onlineItem.title = if (onlineEnabled) "Online recognition: ON" else "Online recognition: OFF"
+        // Framed as a choice between two engines rather than an on/off switch —
+        // "off" gave no hint that the alternative needs a 100MB download.
+        onlineItem.title = if (onlineEnabled) "Recognition: Google" else "Recognition: Whisper"
         onlineItem.isChecked = onlineEnabled
 
         // Update "Direct VoIP call" menu item
@@ -422,9 +428,12 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putBoolean("online_recognition_enabled", newValue).apply()
                 invalidateOptionsMenu()
                 Snackbar.make(binding.root,
-                    if (newValue) "Online recognition enabled (uses network, sends audio to Google)"
-                    else "Online recognition disabled (on-device Whisper)",
+                    if (newValue) "Recognition: Google (needs network, sends audio to Google)"
+                    else "Recognition: Whisper (on-device, no network)",
                     Snackbar.LENGTH_LONG).show()
+                // Switching TO Whisper is the only moment the model actually
+                // matters, so that is the only moment worth asking about it.
+                if (!newValue) promptForBaseModelIfMissing()
                 true
             }
 

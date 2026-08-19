@@ -62,7 +62,7 @@ The Whisper model is **not** committed to the repo (model files are git-ignored)
    ```
    The APK will be in `app/build/outputs/apk/release/`.
 
-**Without bundling it** (CI builds, and any APK built from a clean clone): the app detects the missing model on first launch and offers to download it (~100 MB) from the same HuggingFace repo. It can also be triggered later from the menu (⋮ → *Λήψη μοντέλου ομιλίας*), which only appears while the model is absent. Until the model is present, offline transcription cannot run and AVA says so out loud rather than failing silently — though **Online recognition** mode works without it.
+**Without bundling it** (CI builds, and any APK built from a clean clone): AVA does **not** nag for the model at startup, because *Recognition: Google* needs no model at all. The download is offered at the one moment it matters — switching to *Recognition: Whisper* while the model is absent — and can also be triggered from the menu (⋮ → *Λήψη μοντέλου ομιλίας*), which only appears while the model is missing. Until the model is present, offline transcription cannot run and AVA says so out loud rather than failing silently — though **Online recognition** mode works without it.
 
 Building `:whisper_native` requires the Android **NDK and CMake** (native ABIs: `armeabi-v7a`, `arm64-v8a`).
 
@@ -136,7 +136,7 @@ Two menu items exist for the exceptions:
 |---|---|
 | Start on Unlock | Automatically start AVA when the phone is unlocked |
 | Fast Mode | ON = fast/less-accurate base model (bundled); OFF = slower/more-accurate small model (~305 MB download) |
-| Online recognition | **Default OFF.** ON = transcribe with Google's built-in speech recognizer (`el-GR`) instead of Whisper — usually more accurate on real speech, but **requires a network and sends audio to Google**. On-device Whisper stays the automatic fallback (no network, or if the recognizer errors), so the call button never dies offline. |
+| Recognition: Google / Whisper | **Default Whisper.** Google = transcribe with the built-in speech recognizer (`el-GR`) instead of Whisper — usually more accurate on real speech, but **requires a network and sends audio to Google**. On-device Whisper stays the automatic fallback (no network, or if the recognizer errors), so the call button never dies offline. |
 | Autocall | Automatically place the call when the match is confident (OFF = show a confirm button) |
 | Direct VoIP call | **Default ON.** Place VoIP calls through the contact's own call entry. OFF falls back to opening the app and tapping the button, which needs the accessibility service. |
 | VoIP διαγνωστικά | Shows the call entries found for the last VoIP call attempt, with a copy button — the first thing to check if a contact will not connect |

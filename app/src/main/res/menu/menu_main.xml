@@ -24,7 +24,7 @@
     <item
         android:id="@+id/action_toggle_online"
         android:orderInCategory="98"
-        android:title="Online recognition: OFF"
+        android:title="Recognition: Whisper"
         app:showAsAction="never" />
 
     <item
