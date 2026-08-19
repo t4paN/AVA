@@ -46,6 +46,18 @@
         app:showAsAction="never" />
 
     <item
+        android:id="@+id/action_toggle_directcall"
+        android:orderInCategory="148"
+        android:title="Direct VoIP call: ON"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_voip_report"
+        android:orderInCategory="149"
+        android:title="VoIP διαγνωστικά"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/action_voip_calibration"
         android:orderInCategory="150"
         android:title="VoIP Ρυθμίσεις"

@@ -240,6 +240,40 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * Show what the last direct-call lookup found. This is the on-device version
+     * of a logcat dump: the test phone will not have adb attached, so the
+     * mimetypes each messenger registered have to be readable and copyable from
+     * the app itself.
+     */
+    private fun showVoIPReportDialog() {
+        val report = VoIPDirectCall.lastReport(this)
+            ?: "Καμία κλήση VoIP ακόμα.\n\nΚάνε μία κλήση σε επαφή με Viber, WhatsApp ή Signal και ξανακοίτα εδώ."
+
+        val text = TextView(this).apply {
+            setText(report)
+            setTextIsSelectable(true)
+            typeface = android.graphics.Typeface.MONOSPACE
+            textSize = 12f
+            setPadding(32, 32, 32, 32)
+        }
+        val scroll = ScrollView(this).apply { addView(text) }
+
+        AlertDialog.Builder(this)
+            .setTitle("VoIP διαγνωστικά")
+            .setView(scroll)
+            .setPositiveButton("Αντιγραφή") { _, _ ->
+                val clipboard =
+                    getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(
+                    android.content.ClipData.newPlainText("AVA VoIP report", report)
+                )
+                Snackbar.make(binding.root, "Αντιγράφηκε", Snackbar.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Κλείσιμο", null)
+            .show()
+    }
+
     private fun preloadWhisper() {
         Thread {
             val intent = Intent(this, RecordingService::class.java)
@@ -285,6 +319,13 @@ class MainActivity : AppCompatActivity() {
         val onlineItem = menu.findItem(R.id.action_toggle_online)
         onlineItem.title = if (onlineEnabled) "Online recognition: ON" else "Online recognition: OFF"
         onlineItem.isChecked = onlineEnabled
+
+        // Update "Direct VoIP call" menu item
+        val directCallEnabled = VoIPManager.isDirectCallEnabled(this)
+        val directCallItem = menu.findItem(R.id.action_toggle_directcall)
+        directCallItem.title =
+            if (directCallEnabled) "Direct VoIP call: ON" else "Direct VoIP call: OFF"
+        directCallItem.isChecked = directCallEnabled
 
         // Only offer the base-model download on builds that need it — hidden
         // entirely when the model is bundled in assets or already fetched.
@@ -338,6 +379,22 @@ class MainActivity : AppCompatActivity() {
                     Snackbar.make(binding.root, "Fast mode enabled", Snackbar.LENGTH_SHORT).show()
                     restartWhisperEngine()
                 }
+                true
+            }
+
+            R.id.action_toggle_directcall -> {
+                val newValue = !VoIPManager.isDirectCallEnabled(this)
+                VoIPManager.setDirectCallEnabled(this, newValue)
+                invalidateOptionsMenu()
+                Snackbar.make(binding.root,
+                    if (newValue) "Direct VoIP call enabled (contact row, no auto-click)"
+                    else "Direct VoIP call disabled (deep link + auto-click only)",
+                    Snackbar.LENGTH_LONG).show()
+                true
+            }
+
+            R.id.action_voip_report -> {
+                showVoIPReportDialog()
                 true
             }
 

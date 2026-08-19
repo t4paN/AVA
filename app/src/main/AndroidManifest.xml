@@ -143,6 +143,7 @@
     <queries>
         <package android:name="com.viber.voip" />
         <package android:name="com.whatsapp" />
+        <package android:name="org.thoughtcrime.securesms" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="viber" />
