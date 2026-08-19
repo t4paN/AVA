@@ -9,10 +9,11 @@ Speech recognition runs **fully on-device** by default — no internet required.
 - **Offline Greek Speech Recognition** — Whisper ASR via TFLite, optimized for Greek
 - **Fuzzy Contact Matching** — copes with heavily distorted transcriptions through phonetic normalization and weighted scoring
 - **Voice Calling** — places calls through the default dialer or a VoIP app
-- **VoIP Auto-Click** — an AccessibilityService taps the call button for you, using caregiver-calibrated positions (Viber is fully supported end-to-end; WhatsApp and Signal can be set as routing targets)
+- **VoIP Calling** — places Viber, WhatsApp and Signal calls through the contact's own "Free call" entry in the address book: no on-screen tapping, no calibration, no accessibility service
+- **Returns You Home** — when a call ends, AVA puts the phone back on the home screen, so the widget is one tap away and a stray tap inside the messenger cannot start a call you did not mean to make
 - **Read Missed Calls** — AVA reads recent missed calls from the call log and announces them aloud
 - **Magnifier & Flashlight** — turns the camera into a magnifier with the torch on
-- **Radio** — stream Greek radio stations by voice
+- **Radio** — stream Greek radio stations by voice; playback yields to any incoming call and resumes afterwards
 - **Audio-First UX** — Greek TTS announcements and vibration feedback at every step
 - **Widget + Unlock Activation** — start by tapping the widget, or automatically on phone unlock
 
@@ -79,11 +80,14 @@ Building `:whisper_native` requires the Android **NDK and CMake** (native ABIs: 
 
 1. **Display over other apps:** Settings → Apps → Special app access → Display over other apps → AVA → ON
 2. **Show notifications:** Settings → Notifications → AVA → ON
-3. **Accessibility Service** (required for VoIP auto-click only):
+3. **Accessibility Service** — **not needed for normal use.** VoIP calls are placed
+   through the contact's own call entry, which requires nothing beyond the Contacts
+   permission. The service is only a fallback for a contact the messenger has never
+   synced into the address book. If you do want that fallback:
    - Settings → Accessibility → Installed services
    - You may need to enable "Allow downloaded apps" first
    - Find AVA → Toggle ON
-   - ⚠️ **The accessibility service is disabled by Android after every app update — you must re-enable it each time.**
+   - ⚠️ Android disables it after every app update, so it would need re-enabling each time — another reason not to depend on it.
 
 **Then grant these permissions in App Info → Permissions:**
 - ✅ Microphone
@@ -102,22 +106,29 @@ Building `:whisper_native` requires the Android **NDK and CMake** (native ABIs: 
 2. Widgets → AVA
 3. Drag the widget to the screen
 
-### VoIP Setup (Optional)
+### VoIP Setup
 
-To place calls through a VoIP app:
+**There is normally nothing to set up.** Viber, WhatsApp and Signal each sync a
+"Free call" entry into the phone's address book, and AVA calls through that entry
+directly — so there are no screen positions to calibrate, nothing to redo when the
+messenger redesigns its screens, and no accessibility service involved. The channel
+does have to be marked on the contact's name (below), and the messenger has to have
+synced that contact, which it does by default.
 
-1. In AVA: Menu (⋮) → VoIP Setup
-2. Select the app (Viber is the fully-supported target)
-3. Pick a screenshot of the app's call screen
-4. Tap where the call button is located
-5. Save
+Two menu items exist for the exceptions:
+
+| Menu (⋮) item | What it is for |
+|---|---|
+| **Direct VoIP call** | ON by default. Turn OFF to force the old deep-link-and-tap route, for comparison on a device. |
+| **VoIP διαγνωστικά** | Shows what the last call lookup found on this phone, with a copy button. Use it when a contact will not connect. |
+| **VoIP Setup** | Calibrates the fallback tap position. Only relevant if you are using the accessibility fallback. |
 
 **Mark VoIP contacts by channel:** add the channel as the **last word** of the contact's name, so AVA routes the call correctly:
 - `Γιώργος Παπαδόπουλος VIBER`
 - `Μαρία Κ WHATSAPP`
 - `Νίκος SIGNAL`
 
-> **Channel support, precisely:** contacts can be routed to **Viber, WhatsApp, or Signal**. Auto-click (tapping the call button for the user) is currently wired end-to-end for **Viber** only; other channels deep-link into the app but do not yet auto-click.
+> **Channel support, precisely:** contacts can be routed to **Viber, WhatsApp, or Signal**. Viber and Signal are verified end-to-end on real devices — the call connects with no accessibility service enabled at all. WhatsApp uses the identical mechanism and its call entry is confirmed present, but has not yet been rung in testing. If a messenger has not synced a given contact there is no entry to call, and AVA falls back to opening the app.
 
 ## Settings
 
@@ -127,7 +138,9 @@ To place calls through a VoIP app:
 | Fast Mode | ON = fast/less-accurate base model (bundled); OFF = slower/more-accurate small model (~305 MB download) |
 | Online recognition | **Default OFF.** ON = transcribe with Google's built-in speech recognizer (`el-GR`) instead of Whisper — usually more accurate on real speech, but **requires a network and sends audio to Google**. On-device Whisper stays the automatic fallback (no network, or if the recognizer errors), so the call button never dies offline. |
 | Autocall | Automatically place the call when the match is confident (OFF = show a confirm button) |
-| VoIP Setup | Configure auto-click positions |
+| Direct VoIP call | **Default ON.** Place VoIP calls through the contact's own call entry. OFF falls back to opening the app and tapping the button, which needs the accessibility service. |
+| VoIP διαγνωστικά | Shows the call entries found for the last VoIP call attempt, with a copy button — the first thing to check if a contact will not connect |
+| VoIP Setup | Calibrates the tap position used by the accessibility fallback |
 | Σταθμοί Ραδιοφώνου | Add or remove radio stations |
 
 The **reset button** (floating button on the main screen) fully restarts AVA and reloads contacts from the device — use it after adding or renaming contacts, since AVA caches them.
