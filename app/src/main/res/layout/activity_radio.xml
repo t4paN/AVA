@@ -1,17 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Radio screen for partially-sighted users.
+
+  Pure black and pure white only: 21:1 contrast, the highest a screen can do.
+  The previous translucent green/blue/orange washes sat at roughly 3:1 against
+  the dark grey background, which is below the accessibility floor for large
+  text and effectively invisible to someone with reduced contrast sensitivity.
+
+  The three zones fill the whole screen — there is no "button" smaller than a
+  third of the display, and the white dividers make the boundaries findable by
+  eye and by memory. Playing state is signalled by inverting the middle zone to
+  white-on-black rather than by a colour change, so it survives colour blindness
+  and a washed-out screen in sunlight.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#1A1A1A">
+    android:background="#000000">
 
-    <!-- TOP ZONE - Next Station (Green) -->
+    <!-- TOP ZONE - Next station -->
     <FrameLayout
         android:id="@+id/zoneNext"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="#4D4CAF50">
+        android:background="#000000">
 
         <LinearLayout
             android:layout_width="wrap_content"
@@ -24,73 +38,92 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="▲"
-                android:textSize="72sp"
-                android:textColor="#4CAF50"
+                android:textSize="120sp"
+                android:textColor="#FFFFFF"
+                android:includeFontPadding="false"
                 android:textStyle="bold" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="ΕΠΟΜΕΝΟΣ"
-                android:textSize="24sp"
-                android:textColor="#B34CAF50" />
+                android:textSize="30sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:letterSpacing="0.05" />
 
         </LinearLayout>
     </FrameLayout>
 
-    <!-- MIDDLE ZONE - Play/Stop (Blue/Purple) -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="6dp"
+        android:background="#FFFFFF" />
+
+    <!-- MIDDLE ZONE - Play/Stop. Inverts to white when playing. -->
     <FrameLayout
         android:id="@+id/zonePlayStop"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1.5"
-        android:background="#4D2196F3">
+        android:background="#000000">
 
         <LinearLayout
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:orientation="vertical"
-            android:gravity="center">
+            android:gravity="center"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp">
 
             <TextView
                 android:id="@+id/txtPlayStopIcon"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="▶"
-                android:textSize="96sp"
-                android:textColor="#2196F3"
+                android:textSize="150sp"
+                android:textColor="#FFFFFF"
+                android:includeFontPadding="false"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/txtStationName"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="ΕΡΑ Σπορ"
-                android:textSize="28sp"
+                android:textSize="36sp"
                 android:textColor="#FFFFFF"
                 android:textStyle="bold"
-                android:layout_marginTop="16dp" />
+                android:gravity="center"
+                android:maxLines="2"
+                android:layout_marginTop="12dp" />
 
             <TextView
                 android:id="@+id/txtPlayStopHint"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="ΠΑΤΑ ΓΙΑ PLAY"
-                android:textSize="18sp"
-                android:textColor="#80FFFFFF"
+                android:textSize="24sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
                 android:layout_marginTop="8dp" />
 
         </LinearLayout>
     </FrameLayout>
 
-    <!-- BOTTOM ZONE - Previous Station (Orange) -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="6dp"
+        android:background="#FFFFFF" />
+
+    <!-- BOTTOM ZONE - Previous station -->
     <FrameLayout
         android:id="@+id/zonePrev"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="#4DFF9800">
+        android:background="#000000">
 
         <LinearLayout
             android:layout_width="wrap_content"
@@ -103,16 +136,19 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="▼"
-                android:textSize="72sp"
-                android:textColor="#FF9800"
+                android:textSize="120sp"
+                android:textColor="#FFFFFF"
+                android:includeFontPadding="false"
                 android:textStyle="bold" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="ΠΡΟΗΓΟΥΜΕΝΟΣ"
-                android:textSize="24sp"
-                android:textColor="#B3FF9800" />
+                android:textSize="30sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:letterSpacing="0.05" />
 
         </LinearLayout>
     </FrameLayout>

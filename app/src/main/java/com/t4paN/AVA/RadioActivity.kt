@@ -36,10 +36,11 @@ class RadioActivity : AppCompatActivity() {
         private const val TAG = "RadioActivity"
 
         // Colors
-        private const val COLOR_BLUE = 0xFF2196F3.toInt()
-        private const val COLOR_PURPLE = 0xFF9C27B0.toInt()
-        private const val BG_BLUE = 0x4D2196F3
-        private const val BG_PURPLE = 0x4D9C27B0
+        // Black and white only — 21:1 contrast. Playing state is shown by
+        // inverting the middle zone rather than by hue, so it still reads for a
+        // colour-blind user and on a screen washed out by sunlight.
+        private const val WHITE = 0xFFFFFFFF.toInt()
+        private const val BLACK = 0xFF000000.toInt()
 
         fun launch(context: Context) {
             context.startActivity(Intent(context, RadioActivity::class.java).apply {
@@ -153,18 +154,19 @@ class RadioActivity : AppCompatActivity() {
         // Update station name
         binding.txtStationName.text = station.displayName
 
-        // Update play/stop button appearance
-        if (isPlaying) {
-            binding.txtPlayStopIcon.text = "■"
-            binding.txtPlayStopIcon.setTextColor(COLOR_PURPLE)
-            binding.txtPlayStopHint.text = "ΠΑΤΑ ΓΙΑ ΣΤΟΠ"
-            binding.zonePlayStop.setBackgroundColor(BG_PURPLE)
-        } else {
-            binding.txtPlayStopIcon.text = "▶"
-            binding.txtPlayStopIcon.setTextColor(COLOR_BLUE)
-            binding.txtPlayStopHint.text = "ΠΑΤΑ ΓΙΑ PLAY"
-            binding.zonePlayStop.setBackgroundColor(BG_BLUE)
-        }
+        // Playing inverts the middle zone to black-on-white; stopped is
+        // white-on-black like the rest of the screen. Every piece of text in the
+        // zone has to flip together or something ends up invisible.
+        val ink = if (isPlaying) BLACK else WHITE
+        val paper = if (isPlaying) WHITE else BLACK
+
+        binding.txtPlayStopIcon.text = if (isPlaying) "■" else "▶"
+        binding.txtPlayStopHint.text = if (isPlaying) "ΠΑΤΑ ΓΙΑ ΣΤΟΠ" else "ΠΑΤΑ ΓΙΑ PLAY"
+
+        binding.zonePlayStop.setBackgroundColor(paper)
+        binding.txtPlayStopIcon.setTextColor(ink)
+        binding.txtStationName.setTextColor(ink)
+        binding.txtPlayStopHint.setTextColor(ink)
     }
 
     private fun vibrateClick() {
