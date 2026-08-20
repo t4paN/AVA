@@ -114,7 +114,13 @@ jobs:
           \`app-release.apk\` — install directly on a phone (Unknown Sources must be allowed).
           \`app-release.aab\` — upload this one to the Play Console.
 
-          Reminder: after installing over a previous build, re-enable AVA's Accessibility service in system settings, or Viber auto-call stops working." \
+          Setup on a new phone: accept the permission prompts (microphone, phone, contacts, call log), allow the screen overlay and notifications, and turn battery optimisation OFF — otherwise Android kills the services and the button silently stops working.
+
+          Add the widget to the home screen. It is the main trigger, and installing an update can remove it.
+
+          For use without a signal, download the speech model once from the menu (~100 MB, over Wi-Fi). Without it there is no recognition when there is no connection.
+
+          VoIP contacts: put VIBER, WHATSAPP or SIGNAL as the last word of the contact name. No calibration and no Accessibility service required." \
             app/build/outputs/apk/release/app-release.apk \
             app/build/outputs/bundle/release/app-release.aab
 
