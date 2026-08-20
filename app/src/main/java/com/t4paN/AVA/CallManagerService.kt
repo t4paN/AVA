@@ -10,6 +10,8 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -54,6 +56,11 @@ class CallManagerService : Service() {
 
         // Timing
         private const val POST_TTS_BUFFER_MS = 500L
+
+        // Backstop for tearing down after an error message. The utterance listener
+        // normally ends the wait as soon as TTS reports done; this is the ceiling for
+        // a TTS that never reports, so a spoken error can't strand the service.
+        private const val ERROR_SPEECH_MAX_MS = 5_000L
 
         // Watching a placed call so the user can be returned to the home screen
         // when it ends. Without this they are left sitting in Viber, where a
@@ -216,6 +223,11 @@ class CallManagerService : Service() {
                         }
                     }, POST_TTS_BUFFER_MS)
                 }
+                if (utteranceId == "error") {
+                    // Heard in full — safe to tear down now instead of waiting out
+                    // ERROR_SPEECH_MAX_MS.
+                    handler.postDelayed({ if (isServiceAlive) cleanup() }, POST_TTS_BUFFER_MS)
+                }
             }
 
             override fun onError(utteranceId: String?) {
@@ -227,6 +239,9 @@ class CallManagerService : Service() {
                             onAnnouncementComplete()
                         }
                     }
+                }
+                if (utteranceId == "error") {
+                    handler.post { if (isServiceAlive) cleanup() }
                 }
             }
         })
@@ -354,6 +369,17 @@ class CallManagerService : Service() {
             return
         }
 
+        // VoIP is internet telephony: no link, no call. Check before handing off,
+        // because once the messenger is launched the failure is 15 s of silence and
+        // a beep. Deliberately does NOT fall back to a cellular call — a contact is
+        // routed to Viber precisely because dialling the number may be expensive.
+        if (!isNetworkAvailable()) {
+            Log.w(TAG, "VoIP call requested with no network")
+            speakError("Δεν υπάρχει σύνδεση στο διαδίκτυο")
+            finishAfterError()
+            return
+        }
+
         // Dismiss overlay before launching VoIP app
         CallOverlayController.dismiss()
 
@@ -368,9 +394,12 @@ class CallManagerService : Service() {
             },
             onFailure = { errorMessage ->
                 Log.w(TAG, "VoIP call failed: $errorMessage")
+                // The message was built for the user and used to be logged only, so a
+                // failed VoIP call was a buzz and a beep — indistinguishable from any
+                // other beep to someone who cannot see the screen.
                 playErrorFeedback()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                speakError(errorMessage)
+                finishAfterError()
             }
         )
     }
@@ -408,6 +437,20 @@ class CallManagerService : Service() {
     /**
      * Play error feedback (same as "δεν βρέθηκε επαφή" pattern).
      */
+    /** Same validated-internet check the recording and radio services use. */
+    private fun isNetworkAvailable(): Boolean {
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(network) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } catch (e: Exception) {
+            Log.e(TAG, "Network check failed", e)
+            false
+        }
+    }
+
     private fun playErrorFeedback() {
         vibrateShort()
         playBeep()
@@ -656,6 +699,21 @@ class CallManagerService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Could not return to the home screen", e)
         }
+    }
+
+    /**
+     * Tear down after an error message — but not before it has been heard.
+     *
+     * cleanup() calls TtsManager.stop(), so calling stopSelf() straight after
+     * speakError() cuts the utterance off before a syllable comes out. That is exactly
+     * how the "no internet" message managed to fail silently on device (2026-08-20):
+     * the check fired, Viber was correctly never launched, and the user heard nothing.
+     *
+     * The utterance listener ends this early on TTS done; the delay is the backstop
+     * for a TTS that never reports.
+     */
+    private fun finishAfterError() {
+        handler.postDelayed({ cleanup() }, ERROR_SPEECH_MAX_MS)
     }
 
     private fun speakError(message: String) {

@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -144,7 +146,13 @@ class RadioPlayerService : Service() {
                 
                 override fun onPlayerError(error: PlaybackException) {
                     Log.e(TAG, "Playback error: ${error.message}")
-                    TtsManager.speak("Δεν βρέθηκε ο σταθμός")
+                    // A dead link and a dead station sound identical to ExoPlayer, but
+                    // not to the user: one is fixable by turning data on. Don't blame
+                    // the station for a connectivity problem.
+                    TtsManager.speak(
+                        if (isNetworkAvailable()) "Δεν βρέθηκε ο σταθμός"
+                        else "Δεν υπάρχει σύνδεση στο διαδίκτυο"
+                    )
                     handler.postDelayed({
                         stopSelf()
                     }, 2000)
@@ -163,6 +171,20 @@ class RadioPlayerService : Service() {
         handler.postDelayed(autoShutoffRunnable, AUTO_SHUTOFF_MS)
     }
     
+    /** Same validated-internet check RecordingService uses to pick an engine. */
+    private fun isNetworkAvailable(): Boolean {
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val network = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(network) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } catch (e: Exception) {
+            Log.e(TAG, "Network check failed", e)
+            false
+        }
+    }
+
     private fun stopPlaying() {
         Log.i(TAG, "Stopping playback")
         handler.removeCallbacks(autoShutoffRunnable)
