@@ -60,6 +60,39 @@ class RecordingService : Service() {
     private var onlineStartMs = 0L
     private var onlineBusyRetried = false
 
+    /** Cap actually in force for this session, resolved from prefs at startListening(). */
+    private var activeMaxListenMs = ONLINE_MAX_LISTEN_DEFAULT_MS
+
+    /**
+     * Last resort for the online path: the recognizer neither returned a result nor
+     * reported an error. Tear it down and end the session — otherwise sessionInProgress
+     * stays true and every later widget press is dropped as a duplicate start.
+     */
+    private val onlineWatchdogRunnable = Runnable {
+        Log.e(TAG, "Online recognizer never called back — aborting session")
+        destroyRecognizer()
+        logOnlineTerminal("(recognizer timed out)", activeMaxListenMs + ONLINE_RESULT_GRACE_MS)
+        if (TtsManager.isReady) TtsManager.speak("Δεν άκουσα τίποτα", "online_timeout")
+        safeToast("Recognition timed out")
+        CallOverlayController.dismiss()
+    }
+
+    /**
+     * Hard cap on online listening. Calls stopListening(), which asks the recognizer to
+     * finalise what it has already heard rather than discarding it — so a user who keeps
+     * talking still gets the first ONLINE_MAX_LISTEN_MS transcribed instead of nothing.
+     */
+    private val onlineCapRunnable = Runnable {
+        Log.w(TAG, "Online listening hit the ${activeMaxListenMs}ms cap — forcing endpoint")
+        try {
+            speechRecognizer?.stopListening()
+        } catch (e: Exception) {
+            Log.e(TAG, "stopListening() failed", e)
+        }
+        // stopListening() is a request, not a guarantee — arm the watchdog behind it.
+        handler.postDelayed(onlineWatchdogRunnable, ONLINE_RESULT_GRACE_MS)
+    }
+
     // Set when the Whisper model is absent entirely (not bundled, not downloaded),
     // so the failure can be reported as "download the model" rather than a generic error.
     private var modelMissing = false
@@ -86,6 +119,28 @@ class RecordingService : Service() {
     companion object {
         private const val TAG = "RecordingService"
         private const val RECORDING_DURATION_MS = 4000L
+
+        // Online recognition clamps. Google's recognizer keeps listening for as long as
+        // it hears *anything* — continuous speech or steady room noise both keep it alive
+        // indefinitely (observed on device 2026-08-20: a 29 s session while the user kept
+        // talking). The Whisper path has always been bounded by RECORDING_DURATION_MS;
+        // these give the online path the same guarantee.
+        // Caregiver-tunable. Speech tempo is personal, not a tuning constant: a brisk
+        // speaker is happy at 3 s, someone who needs a run-up before the name wants 6+.
+        // Clamped on read — a caregiver must not be able to set a value that makes the
+        // assistant unusable for someone who cannot report what changed.
+        private const val PREF_ONLINE_MAX_LISTEN_MS = "online_max_listen_ms"
+        private const val ONLINE_MAX_LISTEN_DEFAULT_MS = 5000L
+        private const val ONLINE_MAX_LISTEN_MIN_MS = 2000L
+        private const val ONLINE_MAX_LISTEN_MAX_MS = 15000L
+        private const val ONLINE_RESULT_GRACE_MS = 5000L  // after stopListening(), wait this long for a result
+        private const val ONLINE_SILENCE_MS = 1200L       // endpointing hints — advisory, often ignored
+        private const val ONLINE_MIN_INPUT_MS = 1500L
+
+        // Spoken whenever the thing the user asked for needs the internet and there
+        // isn't any. AVA is offline-first for calls (Whisper), but radio is a live
+        // stream and the model download is a download — both are dead without a link.
+        private const val MSG_NO_NETWORK = "Δεν υπάρχει σύνδεση στο διαδίκτυο"
         private const val SAMPLE_RATE = 16000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
@@ -417,9 +472,16 @@ class RecordingService : Service() {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "el-GR")
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                // Ask the recognizer to endpoint sooner. These are hints and several
+                // implementations ignore them, so onlineCapRunnable is the real bound.
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, ONLINE_SILENCE_MS)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, ONLINE_SILENCE_MS)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, ONLINE_MIN_INPUT_MS)
             }
             onlineStartMs = System.currentTimeMillis()
             speechRecognizer?.startListening(intent)
+            activeMaxListenMs = resolveMaxListenMs()
+            handler.postDelayed(onlineCapRunnable, activeMaxListenMs)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start online recognition, falling back to Whisper", e)
             recueAndFallbackToWhisper()
@@ -436,6 +498,7 @@ class RecordingService : Service() {
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onResults(results: Bundle?) {
+            cancelOnlineTimers()
             if (isCancelled || !isServiceAlive) return
             val elapsed = System.currentTimeMillis() - onlineStartMs
             val text = results
@@ -459,6 +522,7 @@ class RecordingService : Service() {
         }
 
         override fun onError(error: Int) {
+            cancelOnlineTimers()
             if (isCancelled || !isServiceAlive) return
             Log.w(TAG, "Online recognition error: $error")
             when (error) {
@@ -533,8 +597,27 @@ class RecordingService : Service() {
         sessionInProgress = false
     }
 
+    /**
+     * Listening cap in ms, read fresh each session so a change takes effect without a
+     * restart, and clamped to a range that always leaves AVA usable.
+     */
+    private fun resolveMaxListenMs(): Long {
+        val stored = getSharedPreferences("ava_settings", MODE_PRIVATE)
+            .getLong(PREF_ONLINE_MAX_LISTEN_MS, ONLINE_MAX_LISTEN_DEFAULT_MS)
+        val clamped = stored.coerceIn(ONLINE_MAX_LISTEN_MIN_MS, ONLINE_MAX_LISTEN_MAX_MS)
+        if (clamped != stored) Log.w(TAG, "Listen cap ${stored}ms out of range, using ${clamped}ms")
+        return clamped
+    }
+
+    /** Drop both online clamps. Safe to call when they were never armed. */
+    private fun cancelOnlineTimers() {
+        handler.removeCallbacks(onlineCapRunnable)
+        handler.removeCallbacks(onlineWatchdogRunnable)
+    }
+
     /** Destroy the SpeechRecognizer on the main thread and null it out. */
     private fun destroyRecognizer() {
+        cancelOnlineTimers()
         try {
             speechRecognizer?.cancel()
             speechRecognizer?.destroy()
@@ -826,9 +909,15 @@ class RecordingService : Service() {
                         )
                     )
                     handler.post {
+                        // Downloading the model needs the internet too, so offline the
+                        // "get it from settings" advice is a dead end — name the real
+                        // blocker instead.
                         TtsManager.speak(
-                            if (modelMissing) "Λείπει το μοντέλο ομιλίας. Κάντε λήψη από τις ρυθμίσεις."
-                            else "Σφάλμα αναγνώρισης ομιλίας",
+                            when {
+                                !isNetworkAvailable() -> MSG_NO_NETWORK
+                                modelMissing -> "Λείπει το μοντέλο ομιλίας. Κάντε λήψη από τις ρυθμίσεις."
+                                else -> "Σφάλμα αναγνώρισης ομιλίας"
+                            },
                             "model_missing"
                         )
                         CallOverlayController.dismiss()
@@ -947,7 +1036,15 @@ class RecordingService : Service() {
 
                 handler.post {
                     CallOverlayController.dismiss()
-                    RadioActivity.launch(this@RecordingService)
+                    // Radio is a live stream: no network, no station. Say that up front
+                    // instead of letting ExoPlayer report "σταθμός not found" later and
+                    // blame the station for a connectivity problem.
+                    if (isNetworkAvailable()) {
+                        RadioActivity.launch(this@RecordingService)
+                    } else {
+                        Log.w(TAG, "RADIO requested with no network")
+                        TtsManager.speak(MSG_NO_NETWORK, "no_network")
+                    }
                 }
             }
             SuperFuzzyContactMatcher.Intent.MISSED_CALLS -> {
