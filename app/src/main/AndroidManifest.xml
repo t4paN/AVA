@@ -29,6 +29,10 @@
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- usesCleartextTraffic is kept deliberately: every bundled radio stream is
+         HTTPS, but a caregiver can add an http-only station by hand
+         (RadioStations.addStation). Removing it would break those silently, with a
+         dead ExoPlayer error the primary user cannot see. -->
     <application
         android:name=".AVAApplication"
         android:allowBackup="true"

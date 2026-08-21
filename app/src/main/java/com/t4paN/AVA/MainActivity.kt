@@ -214,7 +214,7 @@ class MainActivity : AppCompatActivity() {
         container.addView(inputLabel)
 
         val input = EditText(this).apply {
-            hint = "π.χ. Σκάι, http://netradio.live24.gr/skai1003"
+            hint = "π.χ. Σκάι, https://netradio.live24.gr/skai1003"
             setSingleLine(true)
         }
         container.addView(input)

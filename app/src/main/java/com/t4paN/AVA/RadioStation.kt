@@ -19,26 +19,36 @@ object RadioStations {
     private const val PREFS_NAME = "ava_radio_stations"
     private const val KEY_STATIONS = "stations_json"
 
+    /**
+     * All six ship over HTTPS. Every one of these endpoints was re-probed on
+     * 2026-08-21 and answered 200 audio/mpeg over TLS, so there is no reason to
+     * put a Play reviewer in front of a cleartext stream URL.
+     *
+     * Cleartext is still permitted app-wide (see usesCleartextTraffic in the
+     * manifest) because a caregiver may add an http-only station by hand — see
+     * addStation(). Shipping no cleartext ourselves and forbidding it outright
+     * are different things.
+     */
     private val DEFAULT_STATIONS = listOf(
         RadioStation(
             id = "era_sport",
             displayName = "ΕΡΑ Σπορ",
-            streamUrl = "http://radiostreaming.ert.gr/ert-erasport"
+            streamUrl = "https://radiostreaming.ert.gr/ert-erasport"
         ),
         RadioStation(
             id = "era_proto",
             displayName = "ΕΡΑ Πρώτο",
-            streamUrl = "http://radiostreaming.ert.gr/ert-proto"
+            streamUrl = "https://radiostreaming.ert.gr/ert-proto"
         ),
         RadioStation(
             id = "era_trito",
             displayName = "ΕΡΑ Τρίτο",
-            streamUrl = "http://radiostreaming.ert.gr/ert-trito"
+            streamUrl = "https://radiostreaming.ert.gr/ert-trito"
         ),
         RadioStation(
             id = "metropolis",
             displayName = "Μετρόπολις",
-            streamUrl = "http://metropolis.live24.gr/metropolis955thess"
+            streamUrl = "https://metropolis.live24.gr/metropolis955thess"
         ),
         RadioStation(
             id = "maestro",
@@ -110,11 +120,21 @@ object RadioStations {
         val trimmedUrl = url.trim()
 
         if (trimmedName.isEmpty() || trimmedUrl.isEmpty()) return false
-        if (!trimmedUrl.startsWith("http")) return false
+
+        // Prefer HTTPS, but never override what was typed. A caregiver pasting a
+        // bare host used to be rejected outright with "wrong format", which reads
+        // as "your station is bad" rather than "add a scheme"; default those to
+        // https. An explicit http:// is kept as-is — the station may genuinely
+        // have no TLS, and silently rewriting it would break a working stream.
+        val normalizedUrl = when {
+            trimmedUrl.startsWith("http://") || trimmedUrl.startsWith("https://") -> trimmedUrl
+            trimmedUrl.contains("://") -> return false
+            else -> "https://$trimmedUrl"
+        }
 
         val current = getAll(context).toMutableList()
         val id = "custom_${System.currentTimeMillis()}"
-        current.add(RadioStation(id, trimmedName, trimmedUrl))
+        current.add(RadioStation(id, trimmedName, normalizedUrl))
         save(context, current)
         return true
     }
