@@ -45,22 +45,10 @@
         android:title="Σταθμοί ραδιοφώνου"
         app:showAsAction="never" />
 
-    <item
-        android:id="@+id/action_toggle_directcall"
-        android:orderInCategory="148"
-        android:title="Direct VoIP call: ON"
-        app:showAsAction="never" />
-
-    <item
-        android:id="@+id/action_voip_report"
-        android:orderInCategory="149"
-        android:title="VoIP διαγνωστικά"
-        app:showAsAction="never" />
-
-    <item
-        android:id="@+id/action_voip_calibration"
-        android:orderInCategory="150"
-        android:title="VoIP Ρυθμίσεις"
-        app:showAsAction="never" />
-
+    <!-- VoIP calibration, VoIP diagnostics and the Direct-VoIP-call toggle were
+         removed 2026-08-21. They all served the calibration + auto-click path,
+         which contact data-row calling replaced; direct calling is now the only
+         path and defaults to on. VoIPCalibrationActivity itself is kept for now
+         because accessibility_service_config.xml still names it as its
+         settingsActivity, and that config ships with the debug-only service. -->
 </menu>
