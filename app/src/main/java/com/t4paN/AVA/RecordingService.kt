@@ -60,8 +60,11 @@ class RecordingService : Service() {
     private var onlineStartMs = 0L
     private var onlineBusyRetried = false
 
-    /** Cap actually in force for this session, resolved from prefs at startListening(). */
-    private var activeMaxListenMs = ONLINE_MAX_LISTEN_DEFAULT_MS
+    /** Speaking budget in force for this session, counted from the first syllable. */
+    private var activeMaxListenMs = MAX_LISTEN_DEFAULT_MS
+
+    /** How long this session will wait for speech to begin before giving up. */
+    private var activeLeadInMs = LEAD_IN_DEFAULT_MS
 
     /**
      * Last resort for the online path: the recognizer neither returned a result nor
@@ -71,7 +74,7 @@ class RecordingService : Service() {
     private val onlineWatchdogRunnable = Runnable {
         Log.e(TAG, "Online recognizer never called back — aborting session")
         destroyRecognizer()
-        logOnlineTerminal("(recognizer timed out)", activeMaxListenMs + ONLINE_RESULT_GRACE_MS)
+        logOnlineTerminal("(recognizer timed out)", activeLeadInMs + activeMaxListenMs + ONLINE_RESULT_GRACE_MS)
         if (TtsManager.isReady) TtsManager.speak("Δεν άκουσα τίποτα", "online_timeout")
         safeToast("Recognition timed out")
         CallOverlayController.dismiss()
@@ -99,7 +102,7 @@ class RecordingService : Service() {
 
     // Timeout runnable as a field so we can cancel it specifically
     private val timeoutRunnable = Runnable {
-        Log.d(TAG, "4-second timeout reached")
+        Log.d(TAG, "Absolute session bound reached (${activeLeadInMs + activeMaxListenMs}ms)")
         stopRecordingImmediately()
     }
 
@@ -118,23 +121,82 @@ class RecordingService : Service() {
 
     companion object {
         private const val TAG = "RecordingService"
-        private const val RECORDING_DURATION_MS = 4000L
 
-        // Online recognition clamps. Google's recognizer keeps listening for as long as
-        // it hears *anything* — continuous speech or steady room noise both keep it alive
-        // indefinitely (observed on device 2026-08-20: a 29 s session while the user kept
-        // talking). The Whisper path has always been bounded by RECORDING_DURATION_MS;
-        // these give the online path the same guarantee.
+        // ---- Listening budget, shared by both recognition paths ----------------
+        //
+        // Knob 1: the hard ceiling on a capture. Google's recognizer keeps listening
+        // for as long as it hears *anything* — continuous speech or steady room noise
+        // both keep it alive indefinitely (observed on device 2026-08-20: a 29 s
+        // session while the user kept talking), so online needs an explicit bound.
+        // Whisper was bounded too, but by a *different* number: a hardcoded 4000 ms,
+        // one second tighter than the online default. Same person, same command, less
+        // budget whenever the network dropped. One value now governs both.
+        //
         // Caregiver-tunable. Speech tempo is personal, not a tuning constant: a brisk
         // speaker is happy at 3 s, someone who needs a run-up before the name wants 6+.
         // Clamped on read — a caregiver must not be able to set a value that makes the
         // assistant unusable for someone who cannot report what changed.
-        private const val PREF_ONLINE_MAX_LISTEN_MS = "online_max_listen_ms"
-        private const val ONLINE_MAX_LISTEN_DEFAULT_MS = 5000L
-        private const val ONLINE_MAX_LISTEN_MIN_MS = 2000L
-        private const val ONLINE_MAX_LISTEN_MAX_MS = 15000L
+        private const val PREF_MAX_LISTEN_MS = "max_listen_ms"
+        private const val MAX_LISTEN_DEFAULT_MS = 5000L
+        private const val MAX_LISTEN_MIN_MS = 2000L
+        private const val MAX_LISTEN_MAX_MS = 15000L
+
+        // Knob 2: how long a pause may last before the capture is considered finished.
+        // Offline this is Silero's silence timeout and it is usually the number that
+        // actually bites — a pause in the middle of a name ends the recording however
+        // large knob 1 is. Online it is only a hint; Google frequently ignores it, which
+        // is exactly why the ceiling above exists.
+        //
+        // The floor is deliberately lower than a caregiver would ever want (200 ms):
+        // this doubles as the instrument for testing early VAD cutoffs, and a floor set
+        // for safety would make the experiment impossible.
+        // Knob 1 is a *speaking* budget, and it does not start until speech does.
+        // This is how long AVA waits for that to happen. Deciding who to call and
+        // composing the sentence happens before the first syllable — reported on
+        // device by an elderly user and, independently, by a child asked to say
+        // "κλήση Τυρανοσαυρος". Under a listen-anchored cap that thinking time was
+        // spent from the same budget as the speech, so the slowest starters got the
+        // least room to talk: exactly backwards.
+        //
+        // Deliberately *not* generous, and deliberately not on the gear screen — it is
+        // patience, not tempo. The absolute bound on a session is lead-in + speaking
+        // budget.
+        //
+        // 6 s, not the 10 s this first shipped with, and the reason is consistency
+        // rather than capability. Google enforces its own pre-speech timeout that no
+        // extra reliably extends — measured on device 2026-08-21, it gave up at about
+        // 4.6 s and returned the fragment 'κλή'. Whisper has no such ceiling, so it
+        // *could* wait far longer. It should not: an engine that waits forever on one
+        // path and cuts you off on the other teaches no usable rhythm, and the user
+        // cannot see which engine is running. `shouldUseOnline()` silently falls back
+        // to Whisper when the network drops, so the same person meets both.
+        //
+        // 6 s covers a slow decider counting to five — the case this exists for — while
+        // staying close enough to Google's real behaviour that one habit works on both.
+        // This is the number to revisit if people keep being clipped.
+        private const val PREF_LEAD_IN_MS = "lead_in_ms"
+        private const val LEAD_IN_DEFAULT_MS = 6000L
+        private const val LEAD_IN_MIN_MS = 2000L
+        private const val LEAD_IN_MAX_MS = 30000L
+
+        // The pause between the spoken prompt and the go-tone. Thinking time spent
+        // here costs nothing, because no recogniser is running yet — which is the only
+        // way to buy a slow decider more time on the Google path, whose own pre-speech
+        // timeout cannot be extended. Widening this beats widening the recorder.
+        //
+        // Default 0 keeps today's behaviour and today's prompt. Above zero the prompt
+        // changes to name the tone, because "say a name" followed by silence invites
+        // the user to speak into a mic that is not listening yet.
+        private const val PREF_THINK_GAP_MS = "think_gap_ms"
+        private const val THINK_GAP_DEFAULT_MS = 0L
+        private const val THINK_GAP_MIN_MS = 0L
+        private const val THINK_GAP_MAX_MS = 10000L
+
+        private const val PREF_ENDPOINT_SILENCE_MS = "endpoint_silence_ms"
+        private const val ENDPOINT_SILENCE_DEFAULT_MS = 700L
+        private const val ENDPOINT_SILENCE_MIN_MS = 200L
+        private const val ENDPOINT_SILENCE_MAX_MS = 3000L
         private const val ONLINE_RESULT_GRACE_MS = 5000L  // after stopListening(), wait this long for a result
-        private const val ONLINE_SILENCE_MS = 1200L       // endpointing hints — advisory, often ignored
         private const val ONLINE_MIN_INPUT_MS = 1500L
 
         // Spoken whenever the thing the user asked for needs the internet and there
@@ -305,8 +367,9 @@ class RecordingService : Service() {
         val filter = IntentFilter("REFRESH_CONTACTS")
         registerReceiver(refreshReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
 
-        // Initialize VAD pipeline
-        vadPipeline = VadAudioPipeline(this)
+        // Initialize VAD pipeline at the stored pause tolerance. startRecording()
+        // re-checks and rebuilds if the caregiver has changed it since.
+        vadPipeline = VadAudioPipeline(this, resolveEndpointSilenceMs().toInt())
 
         // Initialize vibrator
         vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -362,11 +425,11 @@ class RecordingService : Service() {
                 if (!isServiceAlive) return
                 Log.d(TAG, "TTS done: $utteranceId")
                 if (utteranceId == "prompt") {
-                    handler.post {
+                    handler.postDelayed({
                         if (!isCancelled && isServiceAlive) {
-                            chooseEngineAndStart()
+                            cueAndStart()
                         }
-                    }
+                    }, resolveThinkGapMs())
                 }
             }
 
@@ -374,38 +437,61 @@ class RecordingService : Service() {
                 if (!isServiceAlive) return
                 Log.e(TAG, "TTS error: $utteranceId")
                 if (utteranceId == "prompt") {
-                    handler.post {
+                    handler.postDelayed({
                         if (!isCancelled && isServiceAlive) {
-                            chooseEngineAndStart()
+                            cueAndStart()
                         }
-                    }
+                    }, resolveThinkGapMs())
                 }
             }
         })
 
         if (TtsManager.isReady) {
-            TtsManager.speak("Πείτε όνομα", "prompt")
+            // With a gap the tone is the instruction, so the prompt has to say so —
+            // otherwise the user speaks into the silence, before anything is listening.
+            val gap = resolveThinkGapMs()
+            TtsManager.speak(
+                if (gap > 0) "Μετά τον ήχο, πείτε όνομα" else "Πείτε όνομα",
+                "prompt"
+            )
         } else {
             Log.w(TAG, "TTS not ready, skipping prompt")
-            chooseEngineAndStart()
+            cueAndStart()
         }
     }
 
     /**
-     * Play beep, vibrate, then start recording
+     * The go-tone, then whichever engine this session picked.
+     *
+     * The beep used to fire only on the Whisper path — the online path merely
+     * vibrated. That left the *audible* cue depending on which engine happened to run,
+     * on a phone whose user cannot see the screen to tell, and a buzz is easy to miss
+     * on a table. Both paths sound the same tone now; it is the one moment the user
+     * has to recognise, and it must not move.
      */
+    private fun cueAndStart() {
+        if (isCancelled) return
+
+        Log.d(TAG, "Go cue (beep + vibrate)")
+        playBeep()
+        vibrateShort()
+
+        // Let the beep clear the speaker before the mic opens.
+        handler.postDelayed({
+            if (!isCancelled) {
+                chooseEngineAndStart()
+            }
+        }, 50)
+    }
+
+    /** Re-cue and record with Whisper, used when the online path bails mid-session. */
     private fun vibrateAndStartRecording() {
         if (isCancelled) return
 
         Log.d(TAG, "Beep + vibrate before recording...")
-
-        // Play beep
         playBeep()
-
-        // Vibrate
         vibrateShort()
 
-        // Start recording after beep finishes
         handler.postDelayed({
             if (!isCancelled) {
                 prepareRecorder()
@@ -427,13 +513,18 @@ class RecordingService : Service() {
         if (shouldUseOnline()) {
             startOnlineRecognition()
         } else {
-            vibrateAndStartRecording()
+            // Cue already played by cueAndStart(); go straight to the mic.
+            prepareRecorder()
         }
     }
 
     private fun shouldUseOnline(): Boolean {
         val enabled = getSharedPreferences("ava_settings", MODE_PRIVATE)
-            .getBoolean("online_recognition_enabled", false)
+            // Default ON as of 2026-08-21 (t4paN). Whisper remains the automatic
+            // fallback whenever there is no network, so this is "which engine leads",
+            // not "whether Whisper is present". ⚠️ ava/privacy.html and the Play
+            // data-safety answers describe the default and must match this value.
+            .getBoolean("online_recognition_enabled", true)
         return enabled && isNetworkAvailable() && SpeechRecognizer.isRecognitionAvailable(this)
     }
 
@@ -460,8 +551,6 @@ class RecordingService : Service() {
         if (isCancelled || !isServiceAlive) return
         Log.d(TAG, "Starting ONLINE recognition (Google SpeechRecognizer, el-GR)")
 
-        vibrateShort()
-
         try {
             destroyRecognizer()
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
@@ -474,14 +563,19 @@ class RecordingService : Service() {
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 // Ask the recognizer to endpoint sooner. These are hints and several
                 // implementations ignore them, so onlineCapRunnable is the real bound.
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, ONLINE_SILENCE_MS)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, ONLINE_SILENCE_MS)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, resolveEndpointSilenceMs())
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, resolveEndpointSilenceMs())
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, ONLINE_MIN_INPUT_MS)
             }
             onlineStartMs = System.currentTimeMillis()
             speechRecognizer?.startListening(intent)
             activeMaxListenMs = resolveMaxListenMs()
-            handler.postDelayed(onlineCapRunnable, activeMaxListenMs)
+            activeLeadInMs = resolveLeadInMs()
+            // Armed at the lead-in first. onBeginningOfSpeech() re-arms it at the
+            // speaking budget, so a long think before the name costs nothing.
+            handler.postDelayed(onlineCapRunnable, activeLeadInMs)
+            Log.d(TAG, "Online: waiting up to ${activeLeadInMs}ms for speech to start, " +
+                    "then ${activeMaxListenMs}ms to say it")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start online recognition, falling back to Whisper", e)
             recueAndFallbackToWhisper()
@@ -490,7 +584,22 @@ class RecordingService : Service() {
 
     private val onlineListener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {}
-        override fun onBeginningOfSpeech() {}
+        /**
+         * The whole point of the lead-in. Until this fires the session is on patience
+         * time; from here it is on speaking time, so the budget restarts now.
+         *
+         * ⚠️ Google runs its *own* pre-speech timeout underneath this and there is no
+         * public extra that reliably extends it — a very slow starter can still be cut
+         * off by the recogniser itself with ERROR_SPEECH_TIMEOUT before we ever get
+         * here. Offline has no such ceiling, which is a real point in Whisper's favour
+         * for exactly the users this app is for.
+         */
+        override fun onBeginningOfSpeech() {
+            handler.removeCallbacks(onlineCapRunnable)
+            handler.postDelayed(onlineCapRunnable, activeMaxListenMs)
+            Log.d(TAG, "Speech began after ${System.currentTimeMillis() - onlineStartMs}ms — " +
+                    "budget restarts, ${activeMaxListenMs}ms to talk")
+        }
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {}
@@ -603,10 +712,55 @@ class RecordingService : Service() {
      */
     private fun resolveMaxListenMs(): Long {
         val stored = getSharedPreferences("ava_settings", MODE_PRIVATE)
-            .getLong(PREF_ONLINE_MAX_LISTEN_MS, ONLINE_MAX_LISTEN_DEFAULT_MS)
-        val clamped = stored.coerceIn(ONLINE_MAX_LISTEN_MIN_MS, ONLINE_MAX_LISTEN_MAX_MS)
+            .getLong(PREF_MAX_LISTEN_MS, MAX_LISTEN_DEFAULT_MS)
+        val clamped = stored.coerceIn(MAX_LISTEN_MIN_MS, MAX_LISTEN_MAX_MS)
         if (clamped != stored) Log.w(TAG, "Listen cap ${stored}ms out of range, using ${clamped}ms")
         return clamped
+    }
+
+    /**
+     * Think gap in ms — how long after the prompt before the go-tone sounds.
+     */
+    private fun resolveThinkGapMs(): Long {
+        val stored = getSharedPreferences("ava_settings", MODE_PRIVATE)
+            .getLong(PREF_THINK_GAP_MS, THINK_GAP_DEFAULT_MS)
+        val clamped = stored.coerceIn(THINK_GAP_MIN_MS, THINK_GAP_MAX_MS)
+        if (clamped != stored) Log.w(TAG, "Think gap ${stored}ms out of range, using ${clamped}ms")
+        return clamped
+    }
+
+    /**
+     * Lead-in patience in ms, same read-fresh-and-clamp contract as the rest.
+     */
+    private fun resolveLeadInMs(): Long {
+        val stored = getSharedPreferences("ava_settings", MODE_PRIVATE)
+            .getLong(PREF_LEAD_IN_MS, LEAD_IN_DEFAULT_MS)
+        val clamped = stored.coerceIn(LEAD_IN_MIN_MS, LEAD_IN_MAX_MS)
+        if (clamped != stored) Log.w(TAG, "Lead-in ${stored}ms out of range, using ${clamped}ms")
+        return clamped
+    }
+
+    /**
+     * Pause tolerance in ms, same read-fresh-and-clamp contract as the ceiling.
+     */
+    private fun resolveEndpointSilenceMs(): Long {
+        val stored = getSharedPreferences("ava_settings", MODE_PRIVATE)
+            .getLong(PREF_ENDPOINT_SILENCE_MS, ENDPOINT_SILENCE_DEFAULT_MS)
+        val clamped = stored.coerceIn(ENDPOINT_SILENCE_MIN_MS, ENDPOINT_SILENCE_MAX_MS)
+        if (clamped != stored) Log.w(TAG, "Pause tolerance ${stored}ms out of range, using ${clamped}ms")
+        return clamped
+    }
+
+    /**
+     * Silero fixes its silence timeout at build time, so a changed pause tolerance means a
+     * new pipeline. Rebuilding only when the value actually moved keeps the common case
+     * (nothing changed) free — building the VAD loads a model.
+     */
+    private fun ensureVadPipeline(silenceMs: Int) {
+        if (vadPipeline?.silenceTimeoutMs == silenceMs) return
+        Log.i(TAG, "Rebuilding VAD pipeline for pause tolerance ${silenceMs}ms")
+        try { vadPipeline?.close() } catch (e: Exception) { Log.e(TAG, "Error closing VAD", e) }
+        vadPipeline = VadAudioPipeline(this, silenceMs)
     }
 
     /** Drop both online clamps. Safe to call when they were never armed. */
@@ -682,6 +836,14 @@ class RecordingService : Service() {
             Log.d(TAG, "Preparing AudioRecord...")
             isRecording = true
 
+            // Both knobs are read fresh per session, so a change in the gear screen
+            // takes effect on the very next press with no restart.
+            activeMaxListenMs = resolveMaxListenMs()
+            activeLeadInMs = resolveLeadInMs()
+            ensureVadPipeline(resolveEndpointSilenceMs().toInt())
+            Log.d(TAG, "Listening budget: lead-in ${activeLeadInMs}ms, speaking ${activeMaxListenMs}ms, " +
+                    "pause tolerance ${vadPipeline?.silenceTimeoutMs}ms")
+
             val bufferSize = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE,
                 CHANNEL_CONFIG,
@@ -712,7 +874,7 @@ class RecordingService : Service() {
             recordingThread?.start()
 
             // Schedule timeout - use the field runnable so we can cancel it
-            handler.postDelayed(timeoutRunnable, RECORDING_DURATION_MS)
+            handler.postDelayed(timeoutRunnable, activeLeadInMs + activeMaxListenMs)
 
         } catch (e: Exception) {
             Log.e(TAG, "Recording error", e)
@@ -726,9 +888,19 @@ class RecordingService : Service() {
         val frameSize = VadAudioPipeline.FRAME_SIZE_SAMPLES
         val frameBuffer = ShortArray(frameSize)
         var totalSamplesRead = 0
-        val maxSamples = (RECORDING_DURATION_MS * SAMPLE_RATE / 1000).toInt() // 64000 samples for 4 sec
+        // Two budgets, not one. Until the first syllable the session runs on lead-in
+        // patience; from there it runs on the speaking budget. Anchoring to speech start
+        // is the whole fix for a slow decider — under a single listen-anchored cap, the
+        // longer someone took to begin, the less room they had to finish.
+        val leadInSamples = (activeLeadInMs * SAMPLE_RATE / 1000).toInt()
+        val budgetSamples = (activeMaxListenMs * SAMPLE_RATE / 1000).toInt()
+        val absoluteSamples = leadInSamples + budgetSamples
 
-        Log.d(TAG, "Recording up to $maxSamples samples (${RECORDING_DURATION_MS}ms)")
+        var deadlineSamples = leadInSamples
+        var speechStarted = false
+
+        Log.d(TAG, "Recording: ${leadInSamples} samples of patience (${activeLeadInMs}ms), " +
+                "then ${budgetSamples} to speak (${activeMaxListenMs}ms)")
 
         // Reset VAD pipeline for new recording
         vadPipeline?.reset()
@@ -736,7 +908,7 @@ class RecordingService : Service() {
         var speechEndDetected = false
 
         try {
-            while (isRecording && totalSamplesRead < maxSamples && !speechEndDetected && !isCancelled) {
+            while (isRecording && totalSamplesRead < deadlineSamples && !speechEndDetected && !isCancelled) {
                 // Read exactly one frame worth of samples
                 val shortsRead = audioRecord?.read(frameBuffer, 0, frameSize) ?: 0
 
@@ -745,6 +917,23 @@ class RecordingService : Service() {
 
                     // Feed frame to VAD
                     val result = vadPipeline?.processFrame(frameBuffer)
+
+                    // Track the pipeline's own view of whether speech has begun. It can
+                    // flip back to false: a burst too short to qualify (a cough, a chair)
+                    // is discarded by the pipeline, and when that happens the deadline has
+                    // to return to patience rather than leaving a false start to eat the
+                    // speaking budget.
+                    val speechNow = vadPipeline?.hasSpeechBeenDetected() == true
+                    if (speechNow != speechStarted) {
+                        speechStarted = speechNow
+                        val fromHere = if (speechNow) budgetSamples else leadInSamples
+                        deadlineSamples = (totalSamplesRead + fromHere).coerceAtMost(absoluteSamples)
+                        val atMs = (totalSamplesRead * 1000) / SAMPLE_RATE
+                        Log.d(TAG, if (speechNow)
+                            "Speech started at ${atMs}ms — ${activeMaxListenMs}ms to talk from here"
+                        else
+                            "False start discarded at ${atMs}ms — back to waiting")
+                    }
 
                     if (result == VadAudioPipeline.ProcessResult.SPEECH_END) {
                         val durationMs = (totalSamplesRead * 1000) / SAMPLE_RATE

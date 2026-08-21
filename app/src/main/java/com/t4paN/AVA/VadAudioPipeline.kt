@@ -17,14 +17,25 @@ import kotlin.math.sqrt
  * - Accumulate ALL audio from start (no trimming)
  * - Use VAD only to detect when to STOP (silence after speech)
  * - Apply RMS normalization before sending to Whisper (more conservative than peak normalization)
+ *
+ * @param silenceTimeoutMs how long a pause may last before speech counts as finished.
+ *        Caregiver-tunable (ava_settings -> endpoint_silence_ms) because it is the number
+ *        a slow speaker actually feels offline: the recording ends this long after they
+ *        stop making noise, so a pause in the middle of a name ends the capture no matter
+ *        how large the overall listening ceiling is. Silero takes it at build time, so a
+ *        change means constructing a new pipeline — RecordingService.ensureVadPipeline()
+ *        does that when the value moves.
  */
-class VadAudioPipeline(context: Context) {
+class VadAudioPipeline(
+    context: Context,
+    val silenceTimeoutMs: Int = SILENCE_TIMEOUT_MS
+) {
 
     companion object {
         private const val TAG = "VadAudioPipeline"
 
         // VAD parameters - matched closer to woheller69's settings
-        const val SILENCE_TIMEOUT_MS = 700      // woheller69 uses 800ms
+        const val SILENCE_TIMEOUT_MS = 700      // woheller69 uses 800ms; now the default only
         const val MIN_SPEECH_MS = 200           // woheller69 uses 200ms
         const val FRAME_SIZE_SAMPLES = 512      // Silero VAD frame size at 16kHz
         
@@ -53,10 +64,10 @@ class VadAudioPipeline(context: Context) {
     private val frameDurationMs = (FRAME_SIZE_SAMPLES * 1000) / 16000
 
     init {
-        silenceFramesThreshold = SILENCE_TIMEOUT_MS / frameDurationMs
+        silenceFramesThreshold = silenceTimeoutMs / frameDurationMs
         minSpeechFrames = MIN_SPEECH_MS / frameDurationMs
 
-        Log.d(TAG, "Silence threshold: $silenceFramesThreshold frames ($SILENCE_TIMEOUT_MS ms)")
+        Log.d(TAG, "Silence threshold: $silenceFramesThreshold frames ($silenceTimeoutMs ms)")
         Log.d(TAG, "Min speech frames: $minSpeechFrames frames ($MIN_SPEECH_MS ms)")
 
         // Initialize Silero VAD
@@ -65,11 +76,11 @@ class VadAudioPipeline(context: Context) {
             .setSampleRate(SampleRate.SAMPLE_RATE_16K)
             .setFrameSize(FrameSize.FRAME_SIZE_512)
             .setMode(Mode.AGGRESSIVE)
-            .setSilenceDurationMs(SILENCE_TIMEOUT_MS)
+            .setSilenceDurationMs(silenceTimeoutMs)
             .setSpeechDurationMs(MIN_SPEECH_MS)
             .build()
 
-        Log.d(TAG, "Silero VAD initialized (AGGRESSIVE mode)")
+        Log.d(TAG, "Silero VAD initialized (AGGRESSIVE mode, silence ${silenceTimeoutMs}ms)")
     }
 
     /**
