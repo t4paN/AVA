@@ -54,6 +54,16 @@
         </receiver>
 
         <activity
+            android:name=".CaregiverNoticeActivity"
+            android:exported="false"
+            android:label="Οδηγίες για τον βοηθό" />
+
+        <activity
+            android:name=".DeepOptionsActivity"
+            android:exported="false"
+            android:label="Προχωρημένες ρυθμίσεις" />
+
+        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:theme="@style/Theme.GreekVoiceAssistant">

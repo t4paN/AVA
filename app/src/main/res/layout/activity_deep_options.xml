@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Deep options (the gear). Every container here is wrap_content + minHeight rather
+  than a fixed dp height, and the whole thing lives in a NestedScrollView, because
+  the caregiver is working on a phone already zoomed for a partially-sighted user.
+  A fixed-height row clips its own text at 200% font scale; a popup cannot scroll
+  at all, which is why this is a screen and not a dialog.
+-->
+<androidx.core.widget.NestedScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <!-- Reset comes first, above every knob, and that ordering is deliberate:
+             the caregiver tinkers on someone else's phone and leaves, and the person
+             living with the result often cannot see the screen to say what changed.
+             The escape hatch has to be findable without understanding what broke. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Επαναφορά"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Αν κάτι πήγε στραβά και δεν ξέρεις τι, πάτα εδώ. Επαναφέρει όλες τις ρυθμίσεις όπως ήρθαν. Δεν σβήνει το μοντέλο ομιλίας."
+            android:textSize="16sp"
+            android:paddingBottom="12dp" />
+
+        <Button
+            android:id="@+id/btnResetDefaults"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="64dp"
+            android:text="Επαναφορά προεπιλογών"
+            android:textSize="18sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="28dp"
+            android:layout_marginBottom="28dp"
+            android:background="?android:attr/listDivider" />
+
+        <!-- Knob 0: thinking time. Buys a slow decider room without touching the
+             recogniser, which is the only lever that works on the Google path. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Χρόνος σκέψης"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Πόσο περιμένει μετά την ερώτηση πριν ακουστεί ο ήχος. Σε αυτόν τον χρόνο δεν ακούει ακόμα — σκέψου όσο θέλεις. Πάνω από μηδέν, η AVA λέει «Μετά τον ήχο, πείτε όνομα»."
+            android:textSize="16sp"
+            android:paddingBottom="12dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <Button
+                android:id="@+id/btnGapMinus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="80dp"
+                android:minHeight="72dp"
+                android:text="−"
+                android:textSize="26sp"
+                android:contentDescription="Λιγότερο" />
+
+            <TextView
+                android:id="@+id/txtGapValue"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:text="Χωρίς αναμονή" />
+
+            <Button
+                android:id="@+id/btnGapPlus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="80dp"
+                android:minHeight="72dp"
+                android:text="+"
+                android:textSize="26sp"
+                android:contentDescription="Περισσότερο" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="28dp"
+            android:layout_marginBottom="28dp"
+            android:background="?android:attr/listDivider" />
+
+        <!-- Knob 1: the ceiling. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Πόση ώρα ακούει"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Μετράει από τη στιγμή που αρχίζεις να μιλάς, όχι από το πάτημα. Όση ώρα και να σκεφτείς ποιον θα καλέσεις, δεν χάνεις χρόνο από το μιλητό."
+            android:textSize="16sp"
+            android:paddingBottom="12dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <Button
+                android:id="@+id/btnListenMinus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="80dp"
+                android:minHeight="72dp"
+                android:text="−"
+                android:textSize="26sp"
+                android:contentDescription="Λιγότερο" />
+
+            <TextView
+                android:id="@+id/txtListenValue"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:text="5 δευτερόλεπτα" />
+
+            <Button
+                android:id="@+id/btnListenPlus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="80dp"
+                android:minHeight="72dp"
+                android:text="+"
+                android:textSize="26sp"
+                android:contentDescription="Περισσότερο" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="28dp"
+            android:layout_marginBottom="28dp"
+            android:background="?android:attr/listDivider" />
+
+        <!-- Knob 2: pause tolerance. -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Παύση πριν σταματήσει"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:paddingBottom="4dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Πόσο σιωπή περιμένει πριν θεωρήσει ότι τελείωσες. Μικρή τιμή = κόβει γρήγορα. Μεγάλη τιμή = αντέχει παύση στη μέση του ονόματος, αλλά αργεί λίγο περισσότερο κάθε φορά."
+            android:textSize="16sp"
+            android:paddingBottom="12dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <Button
+                android:id="@+id/btnPauseMinus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="80dp"
+                android:minHeight="72dp"
+                android:text="−"
+                android:textSize="26sp"
+                android:contentDescription="Λιγότερο" />
+
+            <TextView
+                android:id="@+id/txtPauseValue"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:text="0,7 δευτερόλεπτα" />
+
+            <Button
+                android:id="@+id/btnPausePlus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="80dp"
+                android:minHeight="72dp"
+                android:text="+"
+                android:textSize="26sp"
+                android:contentDescription="Περισσότερο" />
+        </LinearLayout>
+
+        <!-- Tuning with the primary user present beats guessing for them: the
+             caregiver hears where it cuts off and adjusts on the spot. Reuses the
+             normal capture path, so what you hear is exactly what they will get. -->
+        <Button
+            android:id="@+id/btnTryIt"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:minHeight="64dp"
+            android:text="Δοκιμή τώρα"
+            android:textSize="18sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Πες ένα όνομα και άκου πού κόβει."
+            android:textSize="15sp"
+            android:paddingBottom="24dp" />
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  road2release.md §2 sketched this as a popup. It is a screen instead, for the same
+  reason the settings moved out of the overflow menu: a dialog is width-constrained
+  and cannot scroll, and this is a wall of text read on an already-zoomed phone. The
+  content is unchanged; only the container is.
+-->
+<androidx.core.widget.NestedScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:id="@+id/txtNoticeBody"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="17sp"
+            android:lineSpacingMultiplier="1.25"
+            android:textIsSelectable="true" />
+
+        <Button
+            android:id="@+id/btnNoticeDone"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:layout_marginBottom="24dp"
+            android:minHeight="64dp"
+            android:text="Κατάλαβα"
+            android:textSize="18sp" />
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>

@@ -21,6 +21,39 @@
 
     <include layout="@layout/content_main" />
 
+    <!-- (!) and the gear, bottom-start, opposite the reset FAB. FABs rather than
+         text buttons on purpose: they carry an icon, so they stay the same physical
+         size at 200% font scale instead of growing into the content. The (!)
+         explains; the gear adjusts. -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="@dimen/fab_margin"
+        android:layout_marginBottom="16dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/fabNotice"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="16dp"
+            android:contentDescription="Οδηγίες για τον βοηθό"
+            app:fabCustomSize="64dp"
+            app:backgroundTint="#FF1E88E5"
+            app:srcCompat="@android:drawable/ic_dialog_info" />
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/fabDeepOptions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:contentDescription="Προχωρημένες ρυθμίσεις"
+            app:fabCustomSize="64dp"
+            app:backgroundTint="#FF546E7A"
+            app:srcCompat="@android:drawable/ic_menu_manage" />
+    </LinearLayout>
+
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fab"
         android:layout_width="wrap_content"

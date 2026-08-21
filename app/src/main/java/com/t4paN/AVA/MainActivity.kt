@@ -77,6 +77,16 @@ class MainActivity : AppCompatActivity() {
             Snackbar.make(view, "Επαναφορά…", Snackbar.LENGTH_SHORT).show()
         }
 
+        // The (!) explains, the gear adjusts. Both are on the main screen rather than
+        // behind the overflow menu because a caregiver who does not know the notice
+        // exists will never go looking for it.
+        binding.fabNotice.setOnClickListener {
+            startActivity(Intent(this, CaregiverNoticeActivity::class.java))
+        }
+        binding.fabDeepOptions.setOnClickListener {
+            startActivity(Intent(this, DeepOptionsActivity::class.java))
+        }
+
         requestPermissionsIfNeeded()
 
         // Notification permission (Android 13+)
@@ -288,7 +298,7 @@ class MainActivity : AppCompatActivity() {
         autoCallItem.isChecked = autoCallEnabled
 
         // Update "Online recognition" menu item
-        val onlineEnabled = prefs.getBoolean("online_recognition_enabled", false)
+        val onlineEnabled = prefs.getBoolean("online_recognition_enabled", true)
         val onlineItem = menu.findItem(R.id.action_toggle_online)
         // Framed as a choice between two engines rather than an on/off switch —
         // "off" gave no hint that the alternative needs a 100MB download.
@@ -366,7 +376,7 @@ class MainActivity : AppCompatActivity() {
 
             R.id.action_toggle_online -> {
                 val prefs = getSharedPreferences("ava_settings", MODE_PRIVATE)
-                val currentlyEnabled = prefs.getBoolean("online_recognition_enabled", false)
+                val currentlyEnabled = prefs.getBoolean("online_recognition_enabled", true)
                 val newValue = !currentlyEnabled
                 prefs.edit().putBoolean("online_recognition_enabled", newValue).apply()
                 invalidateOptionsMenu()
