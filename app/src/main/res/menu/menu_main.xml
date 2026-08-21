@@ -6,25 +6,25 @@
     <item
         android:id="@+id/action_toggle_unlock"
         android:orderInCategory="100"
-        android:title="Start on unlock: OFF"
+        android:title="Εκκίνηση με ξεκλείδωμα: ΟΧΙ"
         app:showAsAction="never" />
 
     <item
         android:id="@+id/action_toggle_fastmode"
         android:orderInCategory="99"
-        android:title="Fast mode: ON"
+        android:title="Γρήγορη λειτουργία: ΝΑΙ"
         app:showAsAction="never" />
 
     <item
         android:id="@+id/action_toggle_autocall"
         android:orderInCategory="101"
-        android:title="Auto-call: ON"
+        android:title="Αυτόματη κλήση: ΝΑΙ"
         app:showAsAction="never" />
 
     <item
         android:id="@+id/action_toggle_online"
         android:orderInCategory="98"
-        android:title="Recognition: Whisper"
+        android:title="Αναγνώριση: Whisper"
         app:showAsAction="never" />
 
     <item
@@ -34,18 +34,22 @@
         app:showAsAction="never" />
 
     <item
-        android:id="@+id/action_settings"
-        android:orderInCategory="102"
-        android:title="@string/action_settings"
-        app:showAsAction="never" />
-
-    <item
         android:id="@+id/action_manage_stations"
         android:orderInCategory="90"
         android:title="Σταθμοί ραδιοφώνου"
         app:showAsAction="never" />
 
-    <!-- VoIP calibration, VoIP diagnostics and the Direct-VoIP-call toggle were
+    <!-- Titles carry their state as ΝΑΙ / ΟΧΙ: both are three characters, so the
+         row length no longer changes as a setting is toggled and the ellipsis
+         stops moving around when the popup truncates at high display zoom. A
+         real switch widget needs a real settings screen (road2release.md §1),
+         which an overflow popup cannot be. -->
+
+    <!-- The template's do-nothing "Settings" item was removed 2026-08-21 along
+         with the VoIP entries: it was the fifth English label and tapping it did
+         literally nothing (R.id.action_settings -> true).
+
+         VoIP calibration, VoIP diagnostics and the Direct-VoIP-call toggle were
          removed 2026-08-21. They all served the calibration + auto-click path,
          which contact data-row calling replaced; direct calling is now the only
          path and defaults to on. VoIPCalibrationActivity itself is kept for now

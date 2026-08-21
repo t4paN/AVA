@@ -74,7 +74,7 @@ class MainActivity : AppCompatActivity() {
             }
             startService(nukeIntent)
 
-            Snackbar.make(view, "Resetting...", Snackbar.LENGTH_SHORT).show()
+            Snackbar.make(view, "Επαναφορά…", Snackbar.LENGTH_SHORT).show()
         }
 
         requestPermissionsIfNeeded()
@@ -266,22 +266,25 @@ class MainActivity : AppCompatActivity() {
     override fun onPrepareOptionsMenu(menu: Menu): Boolean {
         val prefs = getSharedPreferences("ava_settings", MODE_PRIVATE)
 
-        // Update "Start on unlock" menu item
+        // Titles are Greek, and state is ΝΑΙ / ΟΧΙ rather than ON / OFF — both are
+        // three characters, so a row does not change length as it is toggled and
+        // the ellipsis stops moving when the popup truncates at high zoom.
         val unlockEnabled = prefs.getBoolean("start_on_unlock", false)
         val unlockItem = menu.findItem(R.id.action_toggle_unlock)
-        unlockItem.title = if (unlockEnabled) "Start on unlock: ON" else "Start on unlock: OFF"
+        unlockItem.title =
+            if (unlockEnabled) "Εκκίνηση με ξεκλείδωμα: ΝΑΙ" else "Εκκίνηση με ξεκλείδωμα: ΟΧΙ"
         unlockItem.isChecked = unlockEnabled
 
-        // Update "Fast mode" menu item
         val fastModeEnabled = ModelManager.isFastModeEnabled(this)
         val fastModeItem = menu.findItem(R.id.action_toggle_fastmode)
-        fastModeItem.title = if (fastModeEnabled) "Fast mode: ON" else "Fast mode: OFF"
+        fastModeItem.title =
+            if (fastModeEnabled) "Γρήγορη λειτουργία: ΝΑΙ" else "Γρήγορη λειτουργία: ΟΧΙ"
         fastModeItem.isChecked = fastModeEnabled
 
-        // Update "Auto-call" menu item
         val autoCallEnabled = prefs.getBoolean("auto_call_enabled", true)
         val autoCallItem = menu.findItem(R.id.action_toggle_autocall)
-        autoCallItem.title = if (autoCallEnabled) "Auto-call: ON" else "Auto-call: OFF"
+        autoCallItem.title =
+            if (autoCallEnabled) "Αυτόματη κλήση: ΝΑΙ" else "Αυτόματη κλήση: ΟΧΙ"
         autoCallItem.isChecked = autoCallEnabled
 
         // Update "Online recognition" menu item
@@ -289,7 +292,7 @@ class MainActivity : AppCompatActivity() {
         val onlineItem = menu.findItem(R.id.action_toggle_online)
         // Framed as a choice between two engines rather than an on/off switch —
         // "off" gave no hint that the alternative needs a 100MB download.
-        onlineItem.title = if (onlineEnabled) "Recognition: Google" else "Recognition: Whisper"
+        onlineItem.title = if (onlineEnabled) "Αναγνώριση: Google" else "Αναγνώριση: Whisper"
         onlineItem.isChecked = onlineEnabled
 
         // Only offer the base-model download on builds that need it — hidden
@@ -308,7 +311,8 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putBoolean("start_on_unlock", newValue).apply()
                 invalidateOptionsMenu()
                 Snackbar.make(binding.root,
-                    if (newValue) "AVA will start on unlock" else "Unlock start disabled",
+                    if (newValue) "Η AVA θα ξεκινά με το ξεκλείδωμα"
+                    else "Η εκκίνηση με το ξεκλείδωμα απενεργοποιήθηκε",
                     Snackbar.LENGTH_SHORT).show()
                 true
             }
@@ -321,7 +325,7 @@ class MainActivity : AppCompatActivity() {
                         // Already downloaded, just toggle
                         ModelManager.setFastModeEnabled(this, false)
                         invalidateOptionsMenu()
-                        Snackbar.make(binding.root, "Accurate mode enabled", Snackbar.LENGTH_SHORT).show()
+                        Snackbar.make(binding.root, "Λειτουργία ακρίβειας ενεργή", Snackbar.LENGTH_SHORT).show()
                         restartWhisperEngine()
                     } else {
                         // Need to download
@@ -329,11 +333,11 @@ class MainActivity : AppCompatActivity() {
                             onComplete = {
                                 ModelManager.setFastModeEnabled(this, false)
                                 invalidateOptionsMenu()
-                                Snackbar.make(binding.root, "Model downloaded! Restarting...", Snackbar.LENGTH_SHORT).show()
+                                Snackbar.make(binding.root, "Το μοντέλο κατέβηκε. Επανεκκίνηση…", Snackbar.LENGTH_SHORT).show()
                                 restartWhisperEngine()
                             },
                             onError = { error ->
-                                Snackbar.make(binding.root, "Download failed: $error", Snackbar.LENGTH_LONG).show()
+                                Snackbar.make(binding.root, "Η λήψη απέτυχε: $error", Snackbar.LENGTH_LONG).show()
                             }
                         )
                     }
@@ -341,7 +345,7 @@ class MainActivity : AppCompatActivity() {
                     // Turning ON fast mode - just toggle, no download needed
                     ModelManager.setFastModeEnabled(this, true)
                     invalidateOptionsMenu()
-                    Snackbar.make(binding.root, "Fast mode enabled", Snackbar.LENGTH_SHORT).show()
+                    Snackbar.make(binding.root, "Γρήγορη λειτουργία ενεργή", Snackbar.LENGTH_SHORT).show()
                     restartWhisperEngine()
                 }
                 true
@@ -354,7 +358,8 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putBoolean("auto_call_enabled", newValue).apply()
                 invalidateOptionsMenu()
                 Snackbar.make(binding.root,
-                    if (newValue) "Auto-call enabled" else "Auto-call disabled (show confirmation)",
+                    if (newValue) "Αυτόματη κλήση ενεργή"
+                    else "Αυτόματη κλήση ανενεργή — θα ζητά επιβεβαίωση",
                     Snackbar.LENGTH_LONG).show()
                 true
             }
@@ -366,8 +371,8 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit().putBoolean("online_recognition_enabled", newValue).apply()
                 invalidateOptionsMenu()
                 Snackbar.make(binding.root,
-                    if (newValue) "Recognition: Google (needs network, sends audio to Google)"
-                    else "Recognition: Whisper (on-device, no network)",
+                    if (newValue) "Αναγνώριση: Google — χρειάζεται σύνδεση, στέλνει τον ήχο στην Google"
+                    else "Αναγνώριση: Whisper — στη συσκευή, χωρίς σύνδεση",
                     Snackbar.LENGTH_LONG).show()
                 // Switching TO Whisper is the only moment the model actually
                 // matters, so that is the only moment worth asking about it.
@@ -385,7 +390,6 @@ class MainActivity : AppCompatActivity() {
                 true
             }
 
-            R.id.action_settings -> true
             else -> super.onOptionsItemSelected(item)
         }
     }
