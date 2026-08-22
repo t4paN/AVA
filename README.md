@@ -126,7 +126,7 @@ served the old deep-link-and-tap route, and direct calling replaced it. Direct
 calling is now the only path. (`VoIPDirectCall` still records what the last lookup
 found; only the on-device viewer is gone, so reading it needs `adb logcat`.)
 
-**Mark VoIP contacts by channel:** add the channel as the **last word** of the contact's name, so AVA routes the call correctly:
+**Mark VoIP contacts by channel:** put the channel **anywhere in the contact's name** — the end is the convention and the clearest place, but a channel word buried between a first name and a surname is picked up too, because the contact editor makes that easy to do by accident. The word is stripped out of the name AVA matches against and kept only as the route:
 - `Γιώργος Παπαδόπουλος VIBER`
 - `Μαρία Κ WHATSAPP`
 - `Νίκος SIGNAL`

@@ -11,7 +11,6 @@ import android.os.Looper
 import android.util.Log
 import android.widget.Button
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 
 /**
  * The gear: advanced settings for a caregiver or an experienced user. The (!) notice
@@ -27,7 +26,7 @@ import androidx.appcompat.app.AppCompatActivity
  * 2. **Steppers, not sliders.** A slider needs fine motor precision and lands badly at
  *    high display zoom. A stepper is also describable over the phone: "press plus twice".
  */
-class DeepOptionsActivity : AppCompatActivity() {
+class DeepOptionsActivity : CaregiverScreen() {
 
     companion object {
         private const val TAG = "DeepOptions"
@@ -66,6 +65,7 @@ class DeepOptionsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_deep_options)
+        padForSystemBars(findViewById(R.id.deepOptionsContent))
         title = "Προχωρημένες ρυθμίσεις"
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 

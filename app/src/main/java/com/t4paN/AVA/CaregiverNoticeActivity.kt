@@ -5,7 +5,6 @@ package com.t4paN.AVA
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 
 /**
  * The (!) — everything that silently breaks AVA if nobody says it out loud.
@@ -20,11 +19,12 @@ import androidx.appcompat.app.AppCompatActivity
  * relationship. The *structure* is what is load-bearing: battery first, because it is
  * the most likely reason a correctly-installed AVA "just stops".
  */
-class CaregiverNoticeActivity : AppCompatActivity() {
+class CaregiverNoticeActivity : CaregiverScreen() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_caregiver_notice)
+        padForSystemBars(findViewById(R.id.noticeContent))
         title = "Οδηγίες για τον βοηθό"
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
@@ -88,9 +88,11 @@ class CaregiverNoticeActivity : AppCompatActivity() {
 
             6) ΕΠΑΦΕΣ ΜΕ VIBER, WHATSAPP Ή SIGNAL
 
-            Γράψε το στο τέλος του ονόματος της επαφής:
+            Γράψε το μέσα στο όνομα της επαφής:
 
             Γιώργος Παπαδόπουλος VIBER
+
+            Στο τέλος είναι το πιο καθαρό, αλλά πιάνει όπου κι αν το βάλεις — και μετά το μικρό όνομα, αν εκεί σε βόλεψε να το γράψεις. Η AVA το αφαιρεί από το όνομα και το κρατάει μόνο για να ξέρει πού να καλέσει.
 
             Τίποτα άλλο δεν χρειάζεται. Καμία ρύθμιση, καμία υπηρεσία προσβασιμότητας.
 

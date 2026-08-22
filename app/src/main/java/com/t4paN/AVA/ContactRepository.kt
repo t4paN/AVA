@@ -33,7 +33,9 @@ object ContactRepository {
     private const val PREFS_NAME = "ava_contact_cache"
     private const val KEY_CONTACTS = "cached_contacts"
     private const val KEY_CACHE_VERSION = "cache_version"
-    private const val CURRENT_CACHE_VERSION = 1
+    // Bumped to 2 on 2026-08-22: extractRouting now finds the channel anywhere in the
+    // name, so every cached contact has to be re-parsed or the old routing sticks.
+    private const val CURRENT_CACHE_VERSION = 2
 
     // Routing keywords - last word of contact name triggers routing
     private val routingKeywords = mapOf(
@@ -331,29 +333,57 @@ object ContactRepository {
     /**
      * Extract routing keyword from contact name
      *
-     * If last word is "viber", "whatsapp", or "signal" (case-insensitive),
-     * strip it and return the routing type.
+     * If any word is "viber", "whatsapp", or "signal" (case-insensitive), strip that
+     * word and return the routing type.
+     *
+     * This used to look only at the last word, which is still the convention we
+     * document — but the contact editor makes the middle easy to hit by accident:
+     * typing the channel into the *first name* field of a contact that also has a
+     * surname buries it between the two. That failed silently, because "no routing"
+     * is the ordinary case for most contacts, so the call just went out through the
+     * dialer instead of the messenger with nothing to indicate why.
      *
      * Examples:
      * - "Δημήτρης Viber" -> ("Δημήτρης", "VIBER")
      * - "Γιάννης Παπαδόπουλος WhatsApp" -> ("Γιάννης Παπαδόπουλος", "WHATSAPP")
+     * - "Γιώργος VIBER Παπαδόπουλος" -> ("Γιώργος Παπαδόπουλος", "VIBER")
+     * - "Νίκος SIGNAL." -> ("Νίκος", "SIGNAL")
      * - "Μαρία Κωνσταντίνου" -> ("Μαρία Κωνσταντίνου", "")
      */
     private fun extractRouting(displayName: String): Pair<String, String> {
-        val parts = displayName.trim().split("\\s+".toRegex())
+        val parts = displayName.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
 
         if (parts.isEmpty()) return Pair(displayName, "")
 
-        val lastPart = parts.last().lowercase()
-        val routing = routingKeywords[lastPart]
+        // Last occurrence wins: the documented convention puts it at the end, so on
+        // the rare "VIBER Γιώργος VIBER" the trailing one is the deliberate one.
+        val index = parts.indexOfLast { routingKeywords.containsKey(it.routingToken()) }
+        if (index < 0) return Pair(displayName, "")
 
-        return if (routing != null) {
-            val matchableName = parts.dropLast(1).joinToString(" ")
-            Pair(matchableName, routing)
-        } else {
-            Pair(displayName, "")
+        val remaining = parts.filterIndexed { i, _ -> i != index }
+
+        // The messenger's own entries are named after the channel and little else
+        // ("WhatsApp", "Viber Out"), and stripping the keyword out of those would
+        // invent a contact called "Out". The test is whether anything voice-matchable
+        // survives: normalizeName() drops every non-Greek character, so a remainder
+        // with no Greek letters in it can never be matched by a spoken name anyway,
+        // which makes its routing moot. Leave those names exactly as they are.
+        if (remaining.none { part -> part.any { it.isGreekLetter() } }) {
+            return Pair(displayName, "")
         }
+
+        return Pair(remaining.joinToString(" "), routingKeywords.getValue(parts[index].routingToken()))
     }
+
+    /**
+     * A name token reduced to the letters people meant to type: lowercased and
+     * stripped of the punctuation that ends up around it — "SIGNAL.", "(viber)".
+     */
+    private fun String.routingToken(): String = lowercase().trim { !it.isLetter() }
+
+    /** Greek and Coptic, plus Greek Extended — the accented forms live in the latter. */
+    private fun Char.isGreekLetter(): Boolean =
+        (this in '\u0370'..'\u03FF') || (this in '\u1F00'..'\u1FFF')
 
     /**
      * Normalize a contact name for fuzzy matching
