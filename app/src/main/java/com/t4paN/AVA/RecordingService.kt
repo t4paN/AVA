@@ -446,18 +446,25 @@ class RecordingService : Service() {
             }
         })
 
-        if (TtsManager.isReady) {
-            // With a gap the tone is the instruction, so the prompt has to say so —
-            // otherwise the user speaks into the silence, before anything is listening.
-            val gap = resolveThinkGapMs()
-            TtsManager.speak(
-                if (gap > 0) "Μετά τον ήχο, πείτε όνομα" else "Πείτε όνομα",
-                "prompt"
-            )
-        } else {
-            Log.w(TAG, "TTS not ready, skipping prompt")
-            cueAndStart()
-        }
+        // With a gap the tone is the instruction, so the prompt has to say so —
+        // otherwise the user speaks into the silence, before anything is listening.
+        val gap = resolveThinkGapMs()
+
+        // Wait for a cold engine rather than skipping the prompt. This used to be a
+        // bare `if (TtsManager.isReady)`, which on the first run after a boot meant a
+        // beep with no spoken prompt at all — the engine had not finished binding yet.
+        // The listener above still drives cueAndStart() when the line finishes; the
+        // timeout path is the only one that starts the tone itself.
+        TtsManager.speakWhenReady(
+            text = if (gap > 0) "Μετά τον ήχο, πείτε όνομα" else "Πείτε όνομα",
+            utteranceId = "prompt",
+            onTimeout = {
+                if (!isCancelled && isServiceAlive) {
+                    Log.w(TAG, "TTS never came up, going straight to the tone")
+                    cueAndStart()
+                }
+            }
+        )
     }
 
     /**
@@ -512,11 +519,27 @@ class RecordingService : Service() {
         onlineBusyRetried = false
         if (shouldUseOnline()) {
             startOnlineRecognition()
-        } else {
+        } else if (offlineAllowed()) {
             // Cue already played by cueAndStart(); go straight to the mic.
             prepareRecorder()
+        } else {
+            // Offline recognition switched off by the caregiver, and Google is not
+            // reachable. Neither engine can run, so say the real reason and stop —
+            // recording audio nothing will ever transcribe is worse than silence.
+            Log.w(TAG, "No engine available: online unusable and offline disabled")
+            handler.post {
+                TtsManager.speak(MSG_NO_NETWORK, "no_engine")
+                CallOverlayController.dismiss()
+            }
+            sessionInProgress = false
         }
     }
+
+    /**
+     * Whether Whisper may run. Off means the caregiver tried it on this phone (see
+     * [OfflineMode]) and decided the wait was worse than the outage.
+     */
+    private fun offlineAllowed(): Boolean = OfflineMode.isEnabled(this)
 
     private fun shouldUseOnline(): Boolean {
         val enabled = getSharedPreferences("ava_settings", MODE_PRIVATE)
@@ -684,6 +707,19 @@ class RecordingService : Service() {
     private fun recueAndFallbackToWhisper() {
         destroyRecognizer()
         if (isCancelled || !isServiceAlive) return
+
+        if (!offlineAllowed()) {
+            // The whole point of the switch: no silent detour onto an engine the
+            // caregiver measured and rejected. Google failed, so say that and stop.
+            Log.w(TAG, "Online recognition failed and offline is disabled — standing down")
+            handler.post {
+                TtsManager.speak("Σφάλμα αναγνώρισης ομιλίας", "no_engine")
+                CallOverlayController.dismiss()
+            }
+            sessionInProgress = false
+            return
+        }
+
         Log.i(TAG, "Falling back to Whisper capture for this session")
         handler.post {
             if (!isCancelled && isServiceAlive) {
@@ -1114,6 +1150,18 @@ class RecordingService : Service() {
                     return@Thread
                 }
 
+                // "Περιμένετε" if this run is dragging. A watchdog on the run in
+                // progress rather than a guess from history, so it also covers the
+                // first-ever transcription — the one nobody has a measurement for.
+                // The mic is closed by now, so speaking cannot contaminate the audio.
+                val patienceCue = Runnable {
+                    if (!isCancelled && isServiceAlive) {
+                        Log.i(TAG, "Whisper still running after ${OfflineMode.PATIENCE_MS}ms — saying so")
+                        TtsManager.speak("Περιμένετε", "whisper_slow")
+                    }
+                }
+                handler.postDelayed(patienceCue, OfflineMode.PATIENCE_MS)
+
                 val startTime = System.currentTimeMillis()
                 val transcription = try {
                     sharedWhisperEngine?.transcribeBuffer(audioSamples) ?: ""
@@ -1131,6 +1179,7 @@ class RecordingService : Service() {
                     }
                 }
                 val transcriptionTime = System.currentTimeMillis() - startTime
+                handler.removeCallbacks(patienceCue)
 
                 Log.d(TAG, "Transcription took ${transcriptionTime}ms")
                 Log.d(TAG, "Transcription result: '$transcription'")

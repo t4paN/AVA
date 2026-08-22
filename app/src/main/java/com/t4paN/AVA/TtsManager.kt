@@ -3,6 +3,8 @@
 package com.t4paN.AVA
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -10,6 +12,12 @@ import java.util.Locale
 
 object TtsManager {
     private const val TAG = "TtsManager"
+
+    // Long enough to cover a cold engine bind on a slow phone (~4.4 s measured on a
+    // Samsung), short enough that a genuinely broken engine does not strand the user
+    // in silence with no beep either.
+    private const val DEFAULT_WAIT_MS = 5000L
+    private const val POLL_MS = 100L
 
     @Volatile
     private var tts: TextToSpeech? = null
@@ -63,6 +71,47 @@ object TtsManager {
         }
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
         return true
+    }
+
+    /**
+     * Speak as soon as the engine is bound, giving up after [timeoutMs].
+     *
+     * The plain [speak] returns false and drops the line when the engine is not up
+     * yet. That is the cold-start race: binding a TTS engine takes seconds on some
+     * phones (~4.4 s measured on a Samsung), and the first thing AVA ever says is the
+     * prompt that tells a user who cannot see the screen that it is listening. Losing
+     * that one line loses the whole interaction, so it is worth waiting for.
+     *
+     * Polls rather than registering a callback with [initialize] on purpose: calling
+     * initialize() again while a bind is in flight would construct a second
+     * TextToSpeech and orphan the first.
+     *
+     * [onSpoken] runs when the line was handed to the engine, [onTimeout] when the
+     * wait ran out — exactly one of them fires, always on the main thread.
+     */
+    fun speakWhenReady(
+        text: String,
+        utteranceId: String? = null,
+        timeoutMs: Long = DEFAULT_WAIT_MS,
+        onSpoken: (() -> Unit)? = null,
+        onTimeout: (() -> Unit)? = null
+    ) {
+        val handler = Handler(Looper.getMainLooper())
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        fun attempt() {
+            if (speak(text, utteranceId)) {
+                onSpoken?.invoke()
+                return
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                Log.w(TAG, "TTS still not ready after ${timeoutMs}ms, dropping: $text")
+                onTimeout?.invoke()
+                return
+            }
+            handler.postDelayed({ attempt() }, POLL_MS)
+        }
+        handler.post { attempt() }
     }
 
     /**

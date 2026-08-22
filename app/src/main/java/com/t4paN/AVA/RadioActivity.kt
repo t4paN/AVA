@@ -83,8 +83,9 @@ class RadioActivity : AppCompatActivity() {
         // Initialize UI with first station
         updateUI()
 
-        // Announce radio mode
-        TtsManager.speak("Ραδιόφωνο")
+        // Announce radio mode. speakWhenReady, not speak: this fires milliseconds
+        // after initialize() above, so on a cold process the engine is never up yet.
+        TtsManager.speakWhenReady("Ραδιόφωνο")
     }
 
     private fun setupClickListeners() {

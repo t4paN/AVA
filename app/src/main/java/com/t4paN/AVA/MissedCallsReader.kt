@@ -194,7 +194,7 @@ object MissedCallsReader {
         if (!hasPermission(context)) {
             Log.e(TAG, "Cannot read missed calls without READ_CALL_LOG")
             handler.post {
-                TtsManager.speak(
+                TtsManager.speakWhenReady(
                     "Χρειάζεται άδεια για το ιστορικό κλήσεων. Ανοίξτε την εφαρμογή για να τη δώσετε.",
                     UTTERANCE_ID
                 )
@@ -230,7 +230,14 @@ object MissedCallsReader {
                     }
                 })
 
-                TtsManager.speak(announcement, UTTERANCE_ID)
+                // The announcement IS the feature — dropping it because the engine
+                // was still binding leaves the overlay up over a silent phone, which
+                // is why the timeout has to dismiss it too.
+                TtsManager.speakWhenReady(
+                    text = announcement,
+                    utteranceId = UTTERANCE_ID,
+                    onTimeout = { CallOverlayController.dismiss() }
+                )
             }
         }.start()
     }

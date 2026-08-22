@@ -149,7 +149,7 @@ class DeepOptionsActivity : AppCompatActivity() {
         render()
         // Spoken as well as shown, so it still works for a primary user being talked
         // through this over the phone.
-        TtsManager.speak("Οι ρυθμίσεις επανήλθαν", "reset_done")
+        TtsManager.speakWhenReady("Οι ρυθμίσεις επανήλθαν", "reset_done")
     }
 
     /**

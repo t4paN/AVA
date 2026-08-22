@@ -305,6 +305,15 @@ class MainActivity : AppCompatActivity() {
         onlineItem.title = if (onlineEnabled) "Αναγνώριση: Google" else "Αναγνώριση: Whisper"
         onlineItem.isChecked = onlineEnabled
 
+        // The offline escape hatch. Sits next to the engine choice because the two
+        // interact: with this off, Whisper cannot lead and cannot catch a fall either.
+        val offlineEnabled = OfflineMode.isEnabled(this)
+        val offlineItem = menu.findItem(R.id.action_toggle_offline)
+        offlineItem.title =
+            if (offlineEnabled) "Λειτουργία χωρίς ίντερνετ: ΝΑΙ"
+            else "Λειτουργία χωρίς ίντερνετ: ΟΧΙ"
+        offlineItem.isChecked = offlineEnabled
+
         // Only offer the base-model download on builds that need it — hidden
         // entirely when the model is bundled in assets or already fetched.
         menu.findItem(R.id.action_download_model).isVisible = !ModelManager.isBaseModelReady(this)
@@ -378,6 +387,16 @@ class MainActivity : AppCompatActivity() {
                 val prefs = getSharedPreferences("ava_settings", MODE_PRIVATE)
                 val currentlyEnabled = prefs.getBoolean("online_recognition_enabled", true)
                 val newValue = !currentlyEnabled
+
+                // Whisper as the lead engine while offline mode is off is a setting
+                // that cannot do anything. Refuse it here rather than let it sit in
+                // the menu looking selected.
+                if (!newValue && !OfflineMode.isEnabled(this)) {
+                    Snackbar.make(binding.root,
+                        "Η λειτουργία χωρίς ίντερνετ είναι κλειστή. Άνοιξέ την πρώτα.",
+                        Snackbar.LENGTH_LONG).show()
+                    return true
+                }
                 prefs.edit().putBoolean("online_recognition_enabled", newValue).apply()
                 invalidateOptionsMenu()
                 Snackbar.make(binding.root,
@@ -387,6 +406,26 @@ class MainActivity : AppCompatActivity() {
                 // Switching TO Whisper is the only moment the model actually
                 // matters, so that is the only moment worth asking about it.
                 if (!newValue) promptForBaseModelIfMissing()
+                true
+            }
+
+            R.id.action_toggle_offline -> {
+                val newValue = !OfflineMode.isEnabled(this)
+                OfflineMode.setEnabled(this, newValue)
+
+                // Switching offline off leaves Google as the only engine there is, so
+                // move the engine choice with it instead of stranding the user on a
+                // Whisper setting that can no longer run.
+                if (!newValue) {
+                    getSharedPreferences("ava_settings", MODE_PRIVATE).edit()
+                        .putBoolean("online_recognition_enabled", true).apply()
+                }
+                invalidateOptionsMenu()
+
+                Snackbar.make(binding.root,
+                    if (newValue) "Η AVA θα ακούει και χωρίς σύνδεση"
+                    else "Χωρίς σύνδεση η AVA δεν θα κάνει κλήση — θα το λέει",
+                    Snackbar.LENGTH_LONG).show()
                 true
             }
 

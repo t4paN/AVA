@@ -70,10 +70,13 @@ class RadioPlayerService : Service() {
     
     private val autoShutoffRunnable = Runnable {
         Log.i(TAG, "Auto-shutoff triggered after 1 hour")
-        TtsManager.speak("Το ραδιόφωνο σταμάτησε")
-        handler.postDelayed({
-            stopSelf()
-        }, 2000)
+        // Stopping is hung off the outcome so the service cannot outrun its own
+        // announcement, whichever way the wait ends.
+        TtsManager.speakWhenReady(
+            text = "Το ραδιόφωνο σταμάτησε",
+            onSpoken = { handler.postDelayed({ stopSelf() }, 2000) },
+            onTimeout = { stopSelf() }
+        )
     }
     
     override fun onBind(intent: Intent?): IBinder? = null
@@ -149,13 +152,12 @@ class RadioPlayerService : Service() {
                     // A dead link and a dead station sound identical to ExoPlayer, but
                     // not to the user: one is fixable by turning data on. Don't blame
                     // the station for a connectivity problem.
-                    TtsManager.speak(
-                        if (isNetworkAvailable()) "Δεν βρέθηκε ο σταθμός"
-                        else "Δεν υπάρχει σύνδεση στο διαδίκτυο"
+                    TtsManager.speakWhenReady(
+                        text = if (isNetworkAvailable()) "Δεν βρέθηκε ο σταθμός"
+                               else "Δεν υπάρχει σύνδεση στο διαδίκτυο",
+                        onSpoken = { handler.postDelayed({ stopSelf() }, 2000) },
+                        onTimeout = { stopSelf() }
                     )
-                    handler.postDelayed({
-                        stopSelf()
-                    }, 2000)
                 }
             })
             

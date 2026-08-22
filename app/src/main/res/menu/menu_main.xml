@@ -23,8 +23,20 @@
 
     <item
         android:id="@+id/action_toggle_online"
-        android:orderInCategory="98"
+        android:orderInCategory="97"
         android:title="Αναγνώριση: Whisper"
+        app:showAsAction="never" />
+
+    <!-- The escape hatch for a phone too slow to carry Whisper, which is a per-device
+         question AVA deliberately does not try to answer for the caregiver: the notice
+         asks them to try it a few times with the network off and decide. Turning this
+         off means no offline engine at all — the call button stops working without a
+         network, which is why the notice spells that out rather than just advising
+         the switch. -->
+    <item
+        android:id="@+id/action_toggle_offline"
+        android:orderInCategory="98"
+        android:title="Λειτουργία χωρίς ίντερνετ: ΝΑΙ"
         app:showAsAction="never" />
 
     <item
