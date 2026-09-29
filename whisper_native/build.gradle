@@ -25,11 +25,12 @@ android {
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path "src/main/cpp/CMakeLists.txt"
-        }
-    }
+    // The C++ engine (src/main/cpp → libaudioEngine, linked against the prebuilt
+    // 2023 libtensorflowlite.so) is not built. AVA only uses WhisperEngineJava,
+    // which runs on the LiteRT library below; WhisperEngineNative has no callers.
+    // Building it shipped two libraries with 4 KB ELF alignment, which Play
+    // rejects for apps targeting Android 15+ (16 KB page-size requirement).
+    // Restoring it means rebuilding libtensorflowlite.so with 16 KB alignment first.
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -39,10 +40,12 @@ android {
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'org.tensorflow:tensorflow-lite:2.14.0'
-    implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
+    // LiteRT is TensorFlow Lite under its new name — same org.tensorflow.lite.*
+    // packages. 1.4.2 ships 16 KB-aligned native libraries; tensorflow-lite
+    // 2.14.0 did not. (gpu-delegate-plugin is dropped: nothing imports it.)
+    implementation 'com.google.ai.edge.litert:litert:1.4.2'
+    implementation 'com.google.ai.edge.litert:litert-support:1.4.2'
     implementation 'com.github.wendykierp:JTransforms:3.1'
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4")
-    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.14.0")
+    implementation 'com.google.ai.edge.litert:litert-gpu:1.4.2'
+    implementation 'com.google.ai.edge.litert:litert-gpu-api:1.4.2'
 }

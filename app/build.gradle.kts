@@ -20,8 +20,8 @@ android {
         applicationId = "com.t4paN.AVA"
         minSdk = 30
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.5.2"
+        versionCode = 14
+        versionName = "1.5.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -90,8 +90,8 @@ dependencies {
     implementation("androidx.media3:media3-common:1.2.1")
 
 // CameraX for magnifier
-    implementation("androidx.camera:camera-core:1.3.1")
-    implementation("androidx.camera:camera-camera2:1.3.1")
-    implementation("androidx.camera:camera-lifecycle:1.3.1")
-    implementation("androidx.camera:camera-view:1.3.1")
+    implementation("androidx.camera:camera-core:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
 }

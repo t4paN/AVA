@@ -83,6 +83,19 @@ jobs:
           AVA_KEY_PASSWORD: ${{ secrets.AVA_KEY_PASSWORD }}
         run: ./gradlew :app:bundleRelease :app:assembleRelease --no-daemon --stacktrace
 
+      # Play rejects apps targeting Android 15+ whose 64-bit native libraries are
+      # not 16 KB page-aligned, and only says so after the upload. Check first.
+      - name: Check 16 KB page alignment
+        run: |
+          mkdir -p /tmp/aab && unzip -q -o app/build/outputs/bundle/release/app-release.aab 'base/lib/arm64-v8a/*' -d /tmp/aab
+          bad=0
+          for so in /tmp/aab/base/lib/arm64-v8a/*.so; do
+            align=$(readelf -lW "$so" | awk '$1=="LOAD"{print $NF}' | sort -u | head -1)
+            echo "$(basename "$so") $align"
+            if [ $((align)) -lt 16384 ]; then echo "::error::$(basename "$so") is not 16 KB aligned ($align)"; bad=1; fi
+          done
+          exit $bad
+
       # An unsigned artifact still builds (the signingConfig is optional by
       # design) so it would sail through unnoticed. Assert it is actually signed.
       - name: Verify the APK is signed
